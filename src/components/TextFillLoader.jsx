@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import anime from "animejs";
+import * as anime from "animejs";
 
 const TextFillLoader = ({ onComplete }) => {
   const [progress, setProgress] = useState(0);
@@ -31,12 +31,15 @@ const TextFillLoader = ({ onComplete }) => {
     });
 
     // Main fill animation - moves from 100% (bottom) to 0% (top)
-    fillTimeline.add({
-      targets: fillRef.current,
-      translateY: ["100%", "0%"],
-      easing: "easeInOutQuad",
-      duration: 6000,
-    }, 0);
+    fillTimeline.add(
+      {
+        targets: fillRef.current,
+        translateY: ["100%", "0%"],
+        easing: "easeInOutQuad",
+        duration: 6000,
+      },
+      0
+    );
 
     // Wave motion on the fill surface
     if (waveRef.current) {
@@ -119,11 +122,7 @@ const TextFillLoader = ({ onComplete }) => {
           />
 
           {/* Filled text using mask */}
-          <use
-            href="#ninadText"
-            fill="url(#gradient)"
-            mask="url(#fillMask)"
-          />
+          <use href="#ninadText" fill="url(#gradient)" mask="url(#fillMask)" />
 
           {/* Gradient for the fill */}
           <defs>
