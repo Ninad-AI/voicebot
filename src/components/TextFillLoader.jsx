@@ -1,69 +1,39 @@
-import { useEffect, useRef, useState } from "react";
-import * as anime from "animejs";
+import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
 
 const TextFillLoader = ({ onComplete }) => {
   const [progress, setProgress] = useState(0);
-  const fillRef = useRef(null);
-  const waveRef = useRef(null);
-  const textContainerRef = useRef(null);
 
   useEffect(() => {
-    // Animate the fill from bottom to top with wave motion
-    const fillTimeline = anime.timeline({
-      easing: "easeInOutSine",
-      duration: 6000,
-      update: (anim) => {
-        const percent = Math.round(anim.progress);
-        setProgress(percent);
-      },
-      complete: () => {
-        // Fade out animation after completion
-        anime({
-          targets: textContainerRef.current,
-          opacity: [1, 0],
-          duration: 800,
-          easing: "easeOutQuad",
-          complete: () => {
-            if (onComplete) onComplete();
-          },
-        });
-      },
-    });
+    // Animate progress from 0 to 100
+    const duration = 6000; // 6 seconds
+    const interval = 50; // Update every 50ms
+    const steps = duration / interval;
+    const increment = 100 / steps;
+    let currentProgress = 0;
 
-    // Main fill animation - moves from 100% (bottom) to 0% (top)
-    fillTimeline.add(
-      {
-        targets: fillRef.current,
-        translateY: ["100%", "0%"],
-        easing: "easeInOutQuad",
-        duration: 6000,
-      },
-      0
-    );
+    const progressInterval = setInterval(() => {
+      currentProgress += increment;
+      if (currentProgress >= 100) {
+        currentProgress = 100;
+        clearInterval(progressInterval);
+        
+        // Call onComplete after a short delay
+        setTimeout(() => {
+          if (onComplete) onComplete();
+        }, 800);
+      }
+      setProgress(Math.round(currentProgress));
+    }, interval);
 
-    // Wave motion on the fill surface
-    if (waveRef.current) {
-      anime({
-        targets: waveRef.current,
-        d: [
-          "M0,50 Q25,45 50,50 T100,50 L100,100 L0,100 Z",
-          "M0,50 Q25,55 50,50 T100,50 L100,100 L0,100 Z",
-          "M0,50 Q25,45 50,50 T100,50 L100,100 L0,100 Z",
-        ],
-        easing: "easeInOutSine",
-        duration: 2000,
-        loop: true,
-      });
-    }
-
-    return () => {
-      fillTimeline.pause();
-    };
+    return () => clearInterval(progressInterval);
   }, [onComplete]);
 
   return (
-    <div
-      ref={textContainerRef}
+    <motion.div
+      initial={{ opacity: 1 }}
+      animate={{ opacity: progress >= 100 ? 0 : 1 }}
+      transition={{ duration: 0.8, ease: "easeOut" }}
       className="fixed inset-0 flex flex-col items-center justify-center overflow-hidden"
       style={{
         background: "linear-gradient(to bottom, #0a0a0a 0%, #1a0a00 100%)",
@@ -96,20 +66,18 @@ const TextFillLoader = ({ onComplete }) => {
               NINAD AI
             </text>
 
-            {/* Mask for the fill effect */}
-            <mask id="fillMask">
-              <rect width="100%" height="100%" fill="black" />
-              <g ref={fillRef} style={{ transform: "translateY(100%)" }}>
-                {/* Wave shape at the top of the fill */}
-                <path
-                  ref={waveRef}
-                  d="M0,50 Q25,45 50,50 T100,50 L100,100 L0,100 Z"
-                  fill="white"
-                  transform="scale(8, 3)"
-                />
-                <rect y="50" width="100%" height="100%" fill="white" />
-              </g>
-            </mask>
+            {/* Clip path for the fill effect */}
+            <clipPath id="fillClip">
+              <rect
+                x="0"
+                y="0"
+                width="100%"
+                height={`${progress}%`}
+                style={{
+                  transition: "height 0.05s linear",
+                }}
+              />
+            </clipPath>
           </defs>
 
           {/* Outline (stroke) of the text */}
@@ -121,8 +89,12 @@ const TextFillLoader = ({ onComplete }) => {
             opacity="0.4"
           />
 
-          {/* Filled text using mask */}
-          <use href="#ninadText" fill="url(#gradient)" mask="url(#fillMask)" />
+          {/* Filled text using clip path */}
+          <use
+            href="#ninadText"
+            fill="url(#gradient)"
+            clipPath="url(#fillClip)"
+          />
 
           {/* Gradient for the fill */}
           <defs>
@@ -132,25 +104,71 @@ const TextFillLoader = ({ onComplete }) => {
               <stop offset="100%" stopColor="#d96500" />
             </linearGradient>
           </defs>
+
+          {/* Animated wave at the fill line */}
+          {progress > 0 && progress < 100 && (
+            <motion.path
+              d="M0,0 Q200,10 400,0 T800,0 L800,20 L0,20 Z"
+              fill="url(#gradient)"
+              initial={{ y: 300 }}
+              animate={{ y: 300 - (progress / 100) * 300 }}
+              transition={{ duration: 0.05, ease: "linear" }}
+              opacity="0.6"
+              style={{
+                filter: "blur(2px)",
+              }}
+            >
+              <animate
+                attributeName="d"
+                values="M0,0 Q200,10 400,0 T800,0 L800,20 L0,20 Z;
+                        M0,0 Q200,-10 400,0 T800,0 L800,20 L0,20 Z;
+                        M0,0 Q200,10 400,0 T800,0 L800,20 L0,20 Z"
+                dur="2s"
+                repeatCount="indefinite"
+              />
+            </motion.path>
+          )}
         </svg>
       </div>
 
       {/* Loading text and percentage */}
-      <div className="mt-8 text-center">
+      <motion.div
+        className="mt-8 text-center"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.3, duration: 0.8 }}
+      >
         <p className="text-ninad-orange text-lg font-medium mb-2">
           Loading Ninad AI...
         </p>
-        <p className="text-white text-4xl font-bold tabular-nums">
+        <motion.p
+          className="text-white text-4xl font-bold tabular-nums"
+          key={progress}
+          initial={{ scale: 1 }}
+          animate={{ scale: [1, 1.1, 1] }}
+          transition={{ duration: 0.3 }}
+        >
           {progress}%
-        </p>
-      </div>
+        </motion.p>
+      </motion.div>
 
       {/* Ambient glow effects */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
         {[...Array(3)].map((_, i) => (
-          <div
+          <motion.div
             key={i}
             className="absolute rounded-full"
+            initial={{ scale: 0.8, opacity: 0.4 }}
+            animate={{
+              scale: [0.8, 1.1, 0.8],
+              opacity: [0.4, 0.8, 0.4],
+            }}
+            transition={{
+              duration: 3 + i,
+              repeat: Infinity,
+              ease: "easeInOut",
+              delay: i * 0.5,
+            }}
             style={{
               width: `${300 + i * 100}px`,
               height: `${300 + i * 100}px`,
@@ -160,27 +178,11 @@ const TextFillLoader = ({ onComplete }) => {
               background: `radial-gradient(circle, rgba(255, 122, 0, ${
                 0.08 - i * 0.02
               }) 0%, transparent 70%)`,
-              animation: `pulse ${3 + i}s ease-in-out infinite`,
-              animationDelay: `${i * 0.5}s`,
             }}
           />
         ))}
       </div>
-
-      <style jsx>{`
-        @keyframes pulse {
-          0%,
-          100% {
-            transform: translate(-50%, -50%) scale(1);
-            opacity: 0.6;
-          }
-          50% {
-            transform: translate(-50%, -50%) scale(1.1);
-            opacity: 1;
-          }
-        }
-      `}</style>
-    </div>
+    </motion.div>
   );
 };
 
