@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import MicButton from './components/MicButton';
-import StartButton from './components/StartButton';
-import OrbVisualizer from './components/OrbVisualizer';
+import { useState, useEffect } from "react";
+import MicButton from "./components/MicButton";
+import StartButton from "./components/StartButton";
+import OrbVisualizer from "./components/OrbVisualizer";
 
 function App() {
   const [isRecording, setIsRecording] = useState(false);
@@ -18,28 +18,39 @@ function App() {
     }
   };
 
+  // Auto-reset recordingComplete to false after 2.5 seconds
+  useEffect(() => {
+    if (recordingComplete) {
+      const timer = setTimeout(() => {
+        setRecordingComplete(false);
+      }, 2500); // 2.5 seconds
+
+      return () => clearTimeout(timer);
+    }
+  }, [recordingComplete]);
+
   const handleStartStream = async () => {
     setIsStreaming(true);
-    
+
     // Mock API call to backend
     try {
-      const response = await fetch('/api/start-stream', {
-        method: 'POST',
+      const response = await fetch("/api/start-stream", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          audioData: audioBlob ? 'audio-data-present' : 'no-audio',
+          audioData: audioBlob ? "audio-data-present" : "no-audio",
         }),
       });
-      
+
       // Simulate streaming started
-      console.log('Stream started (mocked)');
-      
+      console.log("Stream started (mocked)");
+
       // Simulate audio activity for orb animation
       simulateAudioActivity();
     } catch (error) {
-      console.log('Mock API call - backend not available yet');
+      console.log("Mock API call - backend not available yet");
       // Still simulate streaming for demo purposes
       simulateAudioActivity();
     }
@@ -52,7 +63,7 @@ function App() {
       const level = Math.sin(counter / 10) * 0.5 + 0.5; // Oscillate between 0 and 1
       setAudioLevel(level);
       counter++;
-      
+
       // Stop after 10 seconds
       if (counter > 100) {
         clearInterval(interval);
@@ -83,8 +94,8 @@ function App() {
       <main className="flex flex-col items-center justify-center min-h-screen px-4">
         {/* Animated Orb Visualizer */}
         <div className="mb-20">
-          <OrbVisualizer 
-            audioLevel={audioLevel} 
+          <OrbVisualizer
+            audioLevel={audioLevel}
             isActive={isRecording || isStreaming}
           />
         </div>
