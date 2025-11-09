@@ -17,7 +17,7 @@ const TextFillLoader = ({ onComplete }) => {
       if (currentProgress >= 100) {
         currentProgress = 100;
         clearInterval(progressInterval);
-        
+
         // Call onComplete after a short delay
         setTimeout(() => {
           if (onComplete) onComplete();
@@ -104,30 +104,6 @@ const TextFillLoader = ({ onComplete }) => {
               <stop offset="100%" stopColor="#d96500" />
             </linearGradient>
           </defs>
-
-          {/* Animated wave at the fill line */}
-          {progress > 0 && progress < 100 && (
-            <motion.path
-              d="M0,0 Q200,10 400,0 T800,0 L800,20 L0,20 Z"
-              fill="url(#gradient)"
-              initial={{ y: 300 }}
-              animate={{ y: 300 - (progress / 100) * 300 }}
-              transition={{ duration: 0.05, ease: "linear" }}
-              opacity="0.6"
-              style={{
-                filter: "blur(2px)",
-              }}
-            >
-              <animate
-                attributeName="d"
-                values="M0,0 Q200,10 400,0 T800,0 L800,20 L0,20 Z;
-                        M0,0 Q200,-10 400,0 T800,0 L800,20 L0,20 Z;
-                        M0,0 Q200,10 400,0 T800,0 L800,20 L0,20 Z"
-                dur="2s"
-                repeatCount="indefinite"
-              />
-            </motion.path>
-          )}
         </svg>
       </div>
 
