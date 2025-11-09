@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
-import Lottie from 'lottie-react';
-import { motion } from 'framer-motion';
-import animationData from '../assets/ninad-ai-loading.json';
+import { useEffect, useState } from "react";
+import Lottie from "lottie-react";
+import { motion } from "framer-motion";
+import animationData from "../assets/ninad-ai-loading.json";
 
 const LoadingAnimation = ({ onComplete }) => {
   const [showText, setShowText] = useState(false);
@@ -22,7 +22,8 @@ const LoadingAnimation = ({ onComplete }) => {
         <motion.div
           className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full"
           style={{
-            background: 'radial-gradient(circle, rgba(255, 122, 0, 0.15) 0%, transparent 70%)',
+            background:
+              "radial-gradient(circle, rgba(255, 122, 0, 0.15) 0%, transparent 70%)",
           }}
           animate={{
             scale: [1, 1.5, 1],
@@ -31,7 +32,7 @@ const LoadingAnimation = ({ onComplete }) => {
           transition={{
             duration: 4,
             repeat: Infinity,
-            ease: 'easeInOut',
+            ease: "easeInOut",
           }}
         />
       </div>
@@ -41,7 +42,7 @@ const LoadingAnimation = ({ onComplete }) => {
         className="relative z-10 w-full max-w-md px-8"
         initial={{ opacity: 0, scale: 0.8 }}
         animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 1, ease: 'easeOut' }}
+        transition={{ duration: 1, ease: "easeOut" }}
       >
         <Lottie
           animationData={animationData}
@@ -49,9 +50,9 @@ const LoadingAnimation = ({ onComplete }) => {
           autoplay={true}
           onComplete={onComplete}
           style={{
-            width: '100%',
-            height: 'auto',
-            filter: 'drop-shadow(0 0 30px rgba(255, 122, 0, 0.6))',
+            width: "100%",
+            height: "auto",
+            filter: "drop-shadow(0 0 30px rgba(255, 122, 0, 0.6))",
           }}
         />
       </motion.div>
@@ -62,7 +63,7 @@ const LoadingAnimation = ({ onComplete }) => {
           className="relative z-10 mt-8 text-center"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, ease: 'easeOut' }}
+          transition={{ duration: 0.8, ease: "easeOut" }}
         >
           <h2 className="text-2xl md:text-3xl font-bold text-white tracking-tight mb-2">
             Ninad <span className="text-ninad-orange">AI</span>
@@ -70,7 +71,7 @@ const LoadingAnimation = ({ onComplete }) => {
           <motion.p
             className="text-ninad-orange text-sm font-medium"
             style={{
-              textShadow: '0 0 20px rgba(255, 122, 0, 0.5)',
+              textShadow: "0 0 20px rgba(255, 122, 0, 0.5)",
             }}
             animate={{
               opacity: [0.5, 1, 0.5],
@@ -78,10 +79,10 @@ const LoadingAnimation = ({ onComplete }) => {
             transition={{
               duration: 2,
               repeat: Infinity,
-              ease: 'easeInOut',
+              ease: "easeInOut",
             }}
           >
-            Loading Ninad AI...
+            Loading...
           </motion.p>
 
           {/* Animated dots */}
@@ -98,7 +99,7 @@ const LoadingAnimation = ({ onComplete }) => {
                   duration: 1.5,
                   repeat: Infinity,
                   delay: index * 0.2,
-                  ease: 'easeInOut',
+                  ease: "easeInOut",
                 }}
               />
             ))}
@@ -124,7 +125,7 @@ const LoadingAnimation = ({ onComplete }) => {
             duration: 3 + Math.random() * 2,
             repeat: Infinity,
             delay: index * 0.4,
-            ease: 'easeInOut',
+            ease: "easeInOut",
           }}
         />
       ))}

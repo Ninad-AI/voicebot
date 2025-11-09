@@ -105,7 +105,7 @@ function App() {
             key="loading"
             initial={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 1.5, ease: 'easeInOut' }}
+            transition={{ duration: 1.5, ease: "easeInOut" }}
           >
             <LoadingAnimation onComplete={handleLoadingComplete} />
           </motion.div>
@@ -114,7 +114,7 @@ function App() {
             key="main"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={{ duration: 1.5, ease: 'easeInOut' }}
+            transition={{ duration: 1.5, ease: "easeInOut" }}
           >
             <div className="min-h-screen bg-gradient-to-b from-ninad-dark via-black to-ninad-brown relative overflow-hidden">
               {/* Header - Branding */}
