@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import LoadingAnimation from "./components/LoadingAnimation";
+import TextFillLoader from "./components/TextFillLoader";
 import MicButton from "./components/MicButton";
 import StartButton from "./components/StartButton";
 import OrbVisualizer from "./components/OrbVisualizer";
@@ -15,16 +15,16 @@ function App() {
 
   // Handle loading completion
   useEffect(() => {
-    // Set a maximum timeout of 60 seconds
+    // Set a maximum timeout of 8 seconds to match animation
     const maxLoadTimer = setTimeout(() => {
       setIsLoading(false);
-    }, 60000); // 60 seconds
+    }, 8000); // 8 seconds (6s animation + 2s buffer)
 
     return () => clearTimeout(maxLoadTimer);
   }, []);
 
   const handleLoadingComplete = () => {
-    // Called when Lottie animation completes
+    // Called when text fill animation completes
     setIsLoading(false);
   };
 
@@ -107,7 +107,7 @@ function App() {
             exit={{ opacity: 0 }}
             transition={{ duration: 1.5, ease: "easeInOut" }}
           >
-            <LoadingAnimation onComplete={handleLoadingComplete} />
+            <TextFillLoader onComplete={handleLoadingComplete} />
           </motion.div>
         ) : (
           <motion.div
