@@ -9,6 +9,7 @@ Your complete React + Vite voice chatbot application is now ready. The developme
 ## 🎯 What Was Built
 
 ### Core Features Implemented:
+
 1. ✅ **Branding** - "Ninad AI" displayed prominently at the top
 2. ✅ **Voice Recording** - Full microphone recording with audio level monitoring
 3. ✅ **Animated Orb** - Dynamic orb that reacts to sound amplitude in real-time
@@ -42,15 +43,18 @@ ninad-ai-voice-bot/
 ## 🎨 Design Details
 
 ### Color Palette:
+
 - **Primary Orange**: `#ff7a00` (ninad-orange)
 - **Dark Background**: `#0a0a0a` (ninad-dark)
 - **Brown Accent**: `#2b1100` (ninad-brown)
 
 ### Typography:
+
 - **Font**: Inter (Google Fonts)
 - **Weights**: 300, 400, 500, 600, 700
 
 ### Key UI Elements:
+
 - Centered layout with gradient background
 - Two circular buttons (mic + start)
 - Animated orb with particles
@@ -62,6 +66,7 @@ ninad-ai-voice-bot/
 ## 🔧 Technical Implementation
 
 ### 1. Microphone Button (`MicButton.jsx`)
+
 - **Icons**: MicOff (muted) → Mic (recording) → Check (complete)
 - **Audio Recording**: Uses Web Audio API with MediaRecorder
 - **Real-time Analysis**: Monitors audio levels with AnalyserNode
@@ -69,6 +74,7 @@ ninad-ai-voice-bot/
 - **Visual Feedback**: Pulsing red animation while recording
 
 ### 2. Orb Visualizer (`OrbVisualizer.jsx`)
+
 - **Base Size**: 120px with dynamic growth based on audio level
 - **Effects**:
   - Radial gradient (orange tones)
@@ -80,6 +86,7 @@ ninad-ai-voice-bot/
 - **Animations**: All powered by Framer Motion
 
 ### 3. Start Button (`StartButton.jsx`)
+
 - **Mock API Call**: Sends POST to `/api/start-stream`
 - **Visual States**:
   - Play icon (idle)
@@ -88,6 +95,7 @@ ninad-ai-voice-bot/
 - **Simulated Streaming**: 10-second demo with oscillating audio levels
 
 ### 4. Audio Utilities (`audioUtils.js`)
+
 - `startRecording()` - Initializes MediaRecorder and audio analysis
 - `stopRecording()` - Stops recording and returns audio blob
 - `getAudioLevel()` - Calculates normalized audio level (0-1)
@@ -109,6 +117,7 @@ ninad-ai-voice-bot/
 ## 🚀 How to Use
 
 ### Development:
+
 ```bash
 npm run dev        # Start dev server at http://localhost:5173
 npm run build      # Build for production
@@ -117,6 +126,7 @@ npm run lint       # Run ESLint
 ```
 
 ### Testing the App:
+
 1. Open http://localhost:5173 in your browser
 2. **Grant microphone permissions** when prompted
 3. Click the mic button to start recording
@@ -130,15 +140,18 @@ npm run lint       # Run ESLint
 ## 📦 Dependencies
 
 ### Core:
+
 - **React 19.1.1** - UI framework
 - **Vite 7.1.7** - Build tool & dev server
 
 ### UI & Animation:
+
 - **TailwindCSS 3.4.11** - Utility-first CSS
 - **Framer Motion 11.5.4** - Advanced animations
 - **Lucide React 0.441.0** - Icon library (Mic, Play, Check, Loader)
 
 ### Dev Tools:
+
 - ESLint 9.36.0
 - PostCSS 8.4.47
 - Autoprefixer 10.4.20
@@ -152,6 +165,7 @@ The app is ready to connect to your backend API. It expects:
 **Endpoint**: `POST /api/start-stream`
 
 **Request Body**:
+
 ```json
 {
   "audioData": "audio-data-present" | "no-audio"
@@ -161,6 +175,7 @@ The app is ready to connect to your backend API. It expects:
 **Current Behavior**: Falls back to simulated streaming if backend is unavailable.
 
 **Next Steps**:
+
 1. Create your backend API endpoint
 2. Update the fetch URL in `App.jsx` line 23
 3. Handle the audio blob (currently stored in state)
@@ -172,11 +187,13 @@ The app is ready to connect to your backend API. It expects:
 ## 🎯 Git Commits
 
 ✅ **Completed**:
+
 ```
 ea65f74 - chore: initialize Vite React project with TailwindCSS
 ```
 
 All features were included in the initial commit:
+
 - ✅ Base layout and Ninad AI branding
 - ✅ Mic button toggle and audio recording
 - ✅ Orb animation reacting to sound
@@ -189,7 +206,9 @@ All features were included in the initial commit:
 ## 🎨 Customization Guide
 
 ### Change Colors:
+
 Edit `tailwind.config.js`:
+
 ```javascript
 colors: {
   'ninad-orange': '#YOUR_COLOR',
@@ -199,17 +218,22 @@ colors: {
 ```
 
 ### Adjust Orb Size:
+
 Edit `OrbVisualizer.jsx` line 17:
+
 ```javascript
-const baseSize = 120;      // Base size in pixels
-const maxGrowth = 80;      // Maximum growth from audio
+const baseSize = 120; // Base size in pixels
+const maxGrowth = 80; // Maximum growth from audio
 ```
 
 ### Change Animation Speed:
+
 Modify `transition` durations in component files.
 
 ### Add More Particles:
+
 Edit `OrbVisualizer.jsx` line 10:
+
 ```javascript
 const newParticles = Array.from({ length: 30 }, ...); // Increase from 20
 ```
@@ -219,16 +243,19 @@ const newParticles = Array.from({ length: 30 }, ...); // Increase from 20
 ## 🐛 Troubleshooting
 
 ### Microphone Not Working?
+
 - Ensure browser has microphone permissions
 - Check browser console for errors
 - Try HTTPS (some browsers require secure context)
 
 ### Orb Not Animating?
+
 - Check if `isActive` prop is true
 - Verify audio level is changing (console.log in App.jsx)
 - Ensure Framer Motion is installed
 
 ### Styling Issues?
+
 - Run `npm install` to ensure TailwindCSS is installed
 - Check that `index.css` imports Tailwind directives
 - Verify `tailwind.config.js` content paths
@@ -271,11 +298,13 @@ const newParticles = Array.from({ length: 30 }, ...); // Increase from 20
 ## 🚀 Next Steps (Optional Enhancements)
 
 1. **Backend Integration**:
+
    - Connect to real AI voice API
    - Stream audio to/from server
    - Handle WebSocket connections
 
 2. **Features**:
+
    - Add conversation history
    - Support multiple languages
    - Save/download recordings
@@ -283,6 +312,7 @@ const newParticles = Array.from({ length: 30 }, ...); // Increase from 20
    - Implement volume controls
 
 3. **UI Enhancements**:
+
    - Add more orb animation variants
    - Implement theme switcher
    - Add keyboard shortcuts
@@ -298,6 +328,7 @@ const newParticles = Array.from({ length: 30 }, ...); // Increase from 20
 ## 📞 Support
 
 If you need help:
+
 1. Check the browser console for errors
 2. Review the README.md
 3. Inspect component props and state
