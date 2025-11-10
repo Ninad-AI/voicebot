@@ -119,7 +119,7 @@ function App() {
             <div className="min-h-screen bg-ninad-gradient relative overflow-hidden">
               {/* Radial glow overlay */}
               <div className="absolute inset-0 bg-gradient-radial from-transparent via-black/20 to-black/40 pointer-events-none"></div>
-              
+
               {/* Header - Branding */}
               <header className="absolute top-0 left-0 right-0 p-6 z-10">
                 <div className="flex justify-center md:justify-start">

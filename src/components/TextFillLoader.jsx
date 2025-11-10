@@ -36,7 +36,8 @@ const TextFillLoader = ({ onComplete }) => {
       transition={{ duration: 0.8, ease: "easeOut" }}
       className="fixed inset-0 flex flex-col items-center justify-center overflow-hidden"
       style={{
-        background: "linear-gradient(135deg, #210F00 0%, #B70000 50%, #FF7700 100%)",
+        background:
+          "linear-gradient(135deg, #210F00 0%, #B70000 50%, #FF7700 100%)",
       }}
     >
       {/* Main Text with SVG Fill Mask */}
