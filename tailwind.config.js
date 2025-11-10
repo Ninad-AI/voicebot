@@ -20,7 +20,7 @@ export default {
         'text-secondary': '#D9D9D9',
       },
       backgroundImage: {
-        'ninad-gradient': 'linear-gradient(to top, #FF7700 0%, #000000 100%)',
+        'ninad-gradient': 'linear-gradient(to top, #FF7700 0%, #000000 75%)',
         'button-start': 'linear-gradient(135deg, #E99200, #FF7700)',
       },
       fontFamily: {

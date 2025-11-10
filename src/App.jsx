@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import TextFillLoader from "./components/TextFillLoader";
 import MicButton from "./components/MicButton";
 import StartButton from "./components/StartButton";
-import OrbVisualizer from "./components/OrbVisualizer";
+import Orb from "./components/Orb";
 
 function App() {
   const [isLoading, setIsLoading] = useState(true);
@@ -116,9 +116,14 @@ function App() {
             animate={{ opacity: 1 }}
             transition={{ duration: 1.5, ease: "easeInOut" }}
           >
-            <div className="min-h-screen bg-ninad-gradient relative overflow-hidden">
+            <div
+              className="min-h-screen relative overflow-hidden"
+              style={{
+                background: "linear-gradient(to top, #FF7700 0%, #000000 75%)",
+              }}
+            >
               {/* Subtle overlay for depth */}
-              <div className="absolute inset-0 bg-gradient-to-t from-transparent via-black/10 to-black/20 pointer-events-none"></div>
+              <div className="absolute inset-0 bg-gradient-to-t from-transparent via-transparent to-black/10 pointer-events-none"></div>
 
               {/* Header - Branding */}
               <header className="absolute top-0 left-0 right-0 p-6 z-10">
@@ -132,10 +137,12 @@ function App() {
               {/* Main Content Area */}
               <main className="flex flex-col items-center justify-center min-h-screen px-4">
                 {/* Animated Orb Visualizer */}
-                <div className="mb-20">
-                  <OrbVisualizer
-                    audioLevel={audioLevel}
-                    isActive={isRecording || isStreaming}
+                <div className="mb-20 w-[400px] h-[400px] relative">
+                  <Orb
+                    hoverIntensity={0.4}
+                    rotateOnHover={true}
+                    hue={15}
+                    forceHoverState={isRecording || isStreaming}
                   />
                 </div>
 

@@ -23,7 +23,7 @@ body {
   font-family: 'Poppins', 'Inter', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: linear-gradient(to top, #FF7700 0%, #000000 100%);
+  background: linear-gradient(to top, #FF7700 0%, #000000 75%);
   min-height: 100vh;
 }
 
