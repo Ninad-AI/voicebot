@@ -116,12 +116,15 @@ function App() {
             animate={{ opacity: 1 }}
             transition={{ duration: 1.5, ease: "easeInOut" }}
           >
-            <div className="min-h-screen bg-gradient-to-b from-ninad-dark via-black to-ninad-brown relative overflow-hidden">
+            <div className="min-h-screen bg-ninad-gradient relative overflow-hidden">
+              {/* Radial glow overlay */}
+              <div className="absolute inset-0 bg-gradient-radial from-transparent via-black/20 to-black/40 pointer-events-none"></div>
+              
               {/* Header - Branding */}
               <header className="absolute top-0 left-0 right-0 p-6 z-10">
                 <div className="flex justify-center md:justify-start">
-                  <h1 className="text-3xl md:text-4xl font-bold text-white tracking-tight">
-                    Ninad <span className="text-ninad-orange">AI</span>
+                  <h1 className="text-3xl md:text-4xl font-bold text-white tracking-tight drop-shadow-2xl">
+                    Ninad <span className="text-ninad-start-hover">AI</span>
                   </h1>
                 </div>
               </header>
@@ -154,17 +157,17 @@ function App() {
                 {/* Status Text */}
                 <div className="mt-8 text-center">
                   {isRecording && (
-                    <p className="text-ninad-orange text-sm font-medium animate-pulse">
+                    <p className="text-white text-sm font-medium animate-pulse drop-shadow-lg">
                       Recording...
                     </p>
                   )}
                   {recordingComplete && !isRecording && !isStreaming && (
-                    <p className="text-green-400 text-sm font-medium">
+                    <p className="text-white text-sm font-medium drop-shadow-lg">
                       Recording saved. Click Start to begin.
                     </p>
                   )}
                   {isStreaming && (
-                    <p className="text-ninad-orange text-sm font-medium animate-pulse">
+                    <p className="text-white text-sm font-medium animate-pulse drop-shadow-lg">
                       Streaming active...
                     </p>
                   )}
@@ -172,8 +175,8 @@ function App() {
               </main>
 
               {/* Footer */}
-              <footer className="absolute bottom-0 left-0 right-0 p-4 text-center">
-                <p className="text-gray-500 text-xs">
+              <footer className="absolute bottom-0 left-0 right-0 p-4 text-center z-10">
+                <p className="text-white text-xs opacity-80 drop-shadow-lg">
                   © 2025 Ninad AI. Voice-powered conversations.
                 </p>
               </footer>

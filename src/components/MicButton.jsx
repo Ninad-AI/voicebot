@@ -88,17 +88,17 @@ const MicButton = ({
     <motion.button
       onClick={toggleRecording}
       className={`
-        relative w-16 h-16 rounded-full flex items-center justify-center
-        transition-all duration-300 shadow-lg
+        relative w-16 h-16 rounded-md flex items-center justify-center
+        transition-all duration-300
         ${
           recordingComplete && !isRecording
-            ? "bg-green-500 hover:bg-green-600"
+            ? "bg-green-500 hover:bg-green-600 shadow-lg"
             : isRecording
-            ? "bg-red-500 hover:bg-red-600"
-            : "bg-ninad-orange hover:bg-orange-600"
+            ? "bg-red-500 hover:bg-red-600 shadow-lg"
+            : "bg-ninad-mic hover:brightness-110 shadow-glow-red"
         }
       `}
-      whileHover={{ scale: 1.1 }}
+      whileHover={{ scale: 1.05 }}
       whileTap={{ scale: 0.95 }}
       animate={
         isRecording
@@ -108,7 +108,13 @@ const MicButton = ({
                 "0 0 0 15px rgba(239, 68, 68, 0)",
               ],
             }
-          : {}
+          : !recordingComplete && {
+              boxShadow: [
+                "0 0 20px rgba(183, 0, 0, 0.5)",
+                "0 0 30px rgba(183, 0, 0, 0.7)",
+                "0 0 20px rgba(183, 0, 0, 0.5)",
+              ],
+            }
       }
       transition={
         isRecording
@@ -117,7 +123,11 @@ const MicButton = ({
               repeat: Infinity,
               ease: "easeOut",
             }
-          : { duration: 0.2 }
+          : {
+              duration: 2,
+              repeat: Infinity,
+              ease: "easeInOut",
+            }
       }
     >
       {recordingComplete && !isRecording ? (

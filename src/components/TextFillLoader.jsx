@@ -36,7 +36,7 @@ const TextFillLoader = ({ onComplete }) => {
       transition={{ duration: 0.8, ease: "easeOut" }}
       className="fixed inset-0 flex flex-col items-center justify-center overflow-hidden"
       style={{
-        background: "linear-gradient(to bottom, #0a0a0a 0%, #1a0a00 100%)",
+        background: "linear-gradient(135deg, #210F00 0%, #B70000 50%, #FF7700 100%)",
       }}
     >
       {/* Main Text with SVG Fill Mask */}
@@ -84,9 +84,9 @@ const TextFillLoader = ({ onComplete }) => {
           <use
             href="#ninadText"
             fill="none"
-            stroke="#ff7a00"
+            stroke="#FFFFFF"
             strokeWidth="2"
-            opacity="0.4"
+            opacity="0.3"
           />
 
           {/* Filled text using clip path */}
@@ -99,9 +99,11 @@ const TextFillLoader = ({ onComplete }) => {
           {/* Gradient for the fill */}
           <defs>
             <linearGradient id="gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#ff9a3c" />
-              <stop offset="50%" stopColor="#ff7a00" />
-              <stop offset="100%" stopColor="#d96500" />
+              <stop offset="0%" stopColor="#2EC0F9" />
+              <stop offset="25%" stopColor="#67AAF9" />
+              <stop offset="50%" stopColor="#9BBDF9" />
+              <stop offset="75%" stopColor="#C4E0F9" />
+              <stop offset="100%" stopColor="#B95F89" />
             </linearGradient>
           </defs>
         </svg>
@@ -114,7 +116,7 @@ const TextFillLoader = ({ onComplete }) => {
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3, duration: 0.8 }}
       >
-        <p className="text-ninad-orange text-lg font-medium mb-2">
+        <p className="text-white text-lg font-medium mb-2">
           Loading Ninad AI...
         </p>
         <motion.p
@@ -151,7 +153,7 @@ const TextFillLoader = ({ onComplete }) => {
               left: "50%",
               top: "50%",
               transform: "translate(-50%, -50%)",
-              background: `radial-gradient(circle, rgba(255, 122, 0, ${
+              background: `radial-gradient(circle, rgba(255, 119, 0, ${
                 0.08 - i * 0.02
               }) 0%, transparent 70%)`,
             }}

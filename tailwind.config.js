@@ -7,12 +7,28 @@ export default {
   theme: {
     extend: {
       colors: {
-        'ninad-orange': '#ff7a00',
-        'ninad-dark': '#0a0a0a',
-        'ninad-brown': '#2b1100',
+        'ninad': {
+          'black': '#000000',
+          'gradient-start': '#210F00',
+          'gradient-mid': '#B70000',
+          'gradient-end': '#FF7700',
+          'mic': '#B70000',
+          'start-base': '#E99200',
+          'start-hover': '#FF7700',
+        },
+        'text-primary': '#FFFFFF',
+        'text-secondary': '#D9D9D9',
+      },
+      backgroundImage: {
+        'ninad-gradient': 'linear-gradient(135deg, #210F00 0%, #B70000 50%, #FF7700 100%)',
+        'button-start': 'linear-gradient(135deg, #E99200, #FF7700)',
       },
       fontFamily: {
-        sans: ['Inter', 'sans-serif'],
+        sans: ['Poppins', 'Inter', 'sans-serif'],
+      },
+      boxShadow: {
+        'glow-red': '0 0 20px rgba(183, 0, 0, 0.5)',
+        'glow-orange': '0 0 20px rgba(255, 119, 0, 0.5)',
       },
     },
   },

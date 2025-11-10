@@ -1,14 +1,30 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Ninad AI Color Palette */
+  --bg-black: #000000;
+  --gradient-start: #210F00;
+  --gradient-mid: #B70000;
+  --gradient-end: #FF7700;
+  --button-mic: #B70000;
+  --button-start-base: #E99200;
+  --button-start-hover: #FF7700;
+  --text-primary: #FFFFFF;
+  --text-secondary: #D9D9D9;
+}
+
 body {
   margin: 0;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Poppins', 'Inter', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background: linear-gradient(135deg, #210F00 0%, #B70000 50%, #FF7700 100%);
+  min-height: 100vh;
 }
 
 * {
