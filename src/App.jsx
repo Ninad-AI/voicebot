@@ -117,8 +117,8 @@ function App() {
             transition={{ duration: 1.5, ease: "easeInOut" }}
           >
             <div className="min-h-screen bg-ninad-gradient relative overflow-hidden">
-              {/* Radial glow overlay */}
-              <div className="absolute inset-0 bg-gradient-radial from-transparent via-black/20 to-black/40 pointer-events-none"></div>
+              {/* Subtle overlay for depth */}
+              <div className="absolute inset-0 bg-gradient-to-t from-transparent via-black/10 to-black/20 pointer-events-none"></div>
 
               {/* Header - Branding */}
               <header className="absolute top-0 left-0 right-0 p-6 z-10">

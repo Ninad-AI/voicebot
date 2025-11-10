@@ -95,7 +95,7 @@ const MicButton = ({
             ? "bg-green-500 hover:bg-green-600 shadow-lg"
             : isRecording
             ? "bg-red-500 hover:bg-red-600 shadow-lg"
-            : "bg-ninad-mic hover:brightness-110 shadow-glow-red"
+            : "bg-ninad-start-base hover:brightness-110 shadow-glow-orange"
         }
       `}
       whileHover={{ scale: 1.05 }}
@@ -110,9 +110,9 @@ const MicButton = ({
             }
           : !recordingComplete && {
               boxShadow: [
-                "0 0 20px rgba(183, 0, 0, 0.5)",
-                "0 0 30px rgba(183, 0, 0, 0.7)",
-                "0 0 20px rgba(183, 0, 0, 0.5)",
+                "0 0 20px rgba(255, 119, 0, 0.5)",
+                "0 0 30px rgba(255, 119, 0, 0.7)",
+                "0 0 20px rgba(255, 119, 0, 0.5)",
               ],
             }
       }

@@ -36,8 +36,7 @@ const TextFillLoader = ({ onComplete }) => {
       transition={{ duration: 0.8, ease: "easeOut" }}
       className="fixed inset-0 flex flex-col items-center justify-center overflow-hidden"
       style={{
-        background:
-          "linear-gradient(135deg, #210F00 0%, #B70000 50%, #FF7700 100%)",
+        background: "linear-gradient(to top, #FF7700 0%, #000000 100%)",
       }}
     >
       {/* Main Text with SVG Fill Mask */}
@@ -123,9 +122,9 @@ const TextFillLoader = ({ onComplete }) => {
         <motion.p
           className="text-white text-4xl font-bold tabular-nums"
           key={progress}
-          initial={{ scale: 1 }}
-          animate={{ scale: [1, 1.1, 1] }}
-          transition={{ duration: 0.3 }}
+          initial={{ scale: 1, opacity: 0.8 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
         >
           {progress}%
         </motion.p>
