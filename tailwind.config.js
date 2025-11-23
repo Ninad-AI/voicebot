@@ -9,10 +9,10 @@ export default {
       colors: {
         'ninad': {
           'black': '#000000',
-          'gradient-start': '#210F00',
-          'gradient-mid': '#B70000',
-          'gradient-end': '#FF7700',
-          'mic': '#B70000',
+          'gradient-start': '#FF7700',
+          'gradient-mid': '#E99200',
+          'gradient-end': '#B70000',
+          'mic': '#FF7700',
           'start-base': '#E99200',
           'start-hover': '#FF7700',
         },
@@ -27,7 +27,7 @@ export default {
         sans: ['Poppins', 'Inter', 'sans-serif'],
       },
       boxShadow: {
-        'glow-red': '0 0 20px rgba(183, 0, 0, 0.5)',
+        'glow-red': '0 0 20px rgba(83, 43, 136, 0.5)',
         'glow-orange': '0 0 20px rgba(255, 119, 0, 0.5)',
       },
     },

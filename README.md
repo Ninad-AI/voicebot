@@ -30,17 +30,20 @@ A modern, interactive AI voice chatbot web application with stunning visual effe
 ### Installation
 
 1. Clone the repository:
+
 ```bash
 git clone https://github.com/Ninad-AI/voicebot.git
 cd voicebot
 ```
 
 2. Install dependencies:
+
 ```bash
 npm install
 ```
 
 3. Start the development server:
+
 ```bash
 npm run dev
 ```

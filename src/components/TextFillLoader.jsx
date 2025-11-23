@@ -36,7 +36,7 @@ const TextFillLoader = ({ onComplete }) => {
       transition={{ duration: 0.8, ease: "easeOut" }}
       className="fixed inset-0 flex flex-col items-center justify-center overflow-hidden"
       style={{
-        background: "linear-gradient(to top, #FF7700 0%, #000000 75%)",
+        background: "linear-gradient(to top, #9B72CF 0%, #000000 75%)",
       }}
     >
       {/* Main Text with SVG Fill Mask */}
@@ -153,7 +153,7 @@ const TextFillLoader = ({ onComplete }) => {
               left: "50%",
               top: "50%",
               transform: "translate(-50%, -50%)",
-              background: `radial-gradient(circle, rgba(255, 119, 0, ${
+              background: `radial-gradient(circle, rgba(155, 114, 207, ${
                 0.08 - i * 0.02
               }) 0%, transparent 70%)`,
             }}

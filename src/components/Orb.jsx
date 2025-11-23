@@ -124,12 +124,12 @@ export default function Orb({
       float len = length(uv);
       float invLen = len > 0.0 ? 1.0 / len : 0.0;
       
-      float n0 = snoise3(vec3(uv * noiseScale, iTime * 0.5)) * 0.5 + 0.5;
+      float n0 = snoise3(vec3(uv * noiseScale, iTime * 0.3)) * 0.5 + 0.5;
       float r0 = mix(mix(innerRadius, 1.0, 0.4), mix(innerRadius, 1.0, 0.6), n0);
       float d0 = distance(uv, (r0 * invLen) * uv);
       float v0 = light1(1.0, 10.0, d0);
       v0 *= smoothstep(r0 * 1.05, r0, len);
-      float cl = cos(ang + iTime * 2.0) * 0.5 + 0.5;
+      float cl = cos(ang + iTime * 1.5) * 0.5 + 0.5;
       
       float a = iTime * -1.0;
       vec2 pos = vec2(cos(a), sin(a)) * r0;
@@ -222,7 +222,7 @@ export default function Orb({
     let targetHover = 0;
     let lastTime = 0;
     let currentRot = 0;
-    const rotationSpeed = 0.3;
+    const rotationSpeed = 0.2;
 
     const handleMouseMove = (e) => {
       const rect = container.getBoundingClientRect();
@@ -261,7 +261,7 @@ export default function Orb({
 
       const effectiveHover = forceHoverState ? 1 : targetHover;
       program.uniforms.hover.value +=
-        (effectiveHover - program.uniforms.hover.value) * 0.1;
+        (effectiveHover - program.uniforms.hover.value) * 0.05;
 
       if (rotateOnHover && effectiveHover > 0.5) {
         currentRot += dt * rotationSpeed;

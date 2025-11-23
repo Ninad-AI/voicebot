@@ -22,8 +22,8 @@ const OrbVisualizer = ({ audioLevel, isActive }) => {
   // Calculate glow intensity
   const glowIntensity = isActive ? 20 + audioLevel * 40 : 10;
   const glowColor = isActive
-    ? "rgba(255, 119, 0, 0.6)"
-    : "rgba(255, 119, 0, 0.3)";
+    ? "rgba(155, 114, 207, 0.6)"
+    : "rgba(47, 24, 75, 0.3)";
 
   return (
     <div className="relative w-80 h-80 flex items-center justify-center">
@@ -58,7 +58,7 @@ const OrbVisualizer = ({ audioLevel, isActive }) => {
             style={{
               left: "50%",
               top: "50%",
-              background: "linear-gradient(135deg, #E99200, #FF7700)",
+              background: "linear-gradient(135deg, #C8B1E4, #FAEFFA)",
             }}
             animate={
               isActive
@@ -88,10 +88,10 @@ const OrbVisualizer = ({ audioLevel, isActive }) => {
         style={{
           width: currentSize,
           height: currentSize,
-          background: "radial-gradient(circle at 30% 30%, #FF7700, #E99200)",
+          background: "radial-gradient(circle at 30% 30%, #FAEFFA, #2F184B)",
           boxShadow: `0 0 ${glowIntensity}px ${
             glowIntensity / 2
-          }px rgba(255, 119, 0, 0.8)`,
+          }px rgba(47, 24, 75, 0.8)`,
         }}
         animate={{
           scale: isActive ? [1, 1 + audioLevel * 0.3, 1] : 1,
