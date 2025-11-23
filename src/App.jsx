@@ -15,23 +15,6 @@ function App() {
   const [errorMessage, setErrorMessage] = useState("");
   const [conversation, setConversation] = useState([]);
   const [isAISpeaking, setIsAISpeaking] = useState(false);
-  const [orbHoverIntensity, setOrbHoverIntensity] = useState(0);
-
-  // Smooth orb hover intensity transitions
-  useEffect(() => {
-    const targetIntensity = isRecording || isAISpeaking ? 1 : 0;
-    const interval = setInterval(() => {
-      setOrbHoverIntensity((prev) => {
-        const diff = targetIntensity - prev;
-        if (Math.abs(diff) < 0.01) {
-          return targetIntensity;
-        }
-        return prev + diff * 0.1; // Smooth interpolation
-      });
-    }, 16); // ~60fps
-
-    return () => clearInterval(interval);
-  }, [isRecording, isAISpeaking]);
   const recognitionRef = useRef(null);
   const [userTranscript, setUserTranscript] = useState("");
 
@@ -229,9 +212,10 @@ function App() {
               {/* Animated Orb Visualizer */}
               <div className="mb-20 w-[400px] h-[400px] relative">
                 <Orb
-                  hoverIntensity={orbHoverIntensity}
+                  hoverIntensity={0.4}
                   rotateOnHover={true}
                   hue={15}
+                  forceHoverState={isRecording || isAISpeaking}
                 />
               </div>
 

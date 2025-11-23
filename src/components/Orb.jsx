@@ -175,32 +175,39 @@ export default function Orb({
     const container = ctnDom.current;
     if (!container) return;
 
-    const renderer = new Renderer({ alpha: true, premultipliedAlpha: false });
-    const gl = renderer.gl;
-    gl.clearColor(0, 0, 0, 0);
-    container.appendChild(gl.canvas);
+    let renderer, gl, program, mesh;
 
-    const geometry = new Triangle(gl);
-    const program = new Program(gl, {
-      vertex: vert,
-      fragment: frag,
-      uniforms: {
-        iTime: { value: 0 },
-        iResolution: {
-          value: new Vec3(
-            gl.canvas.width,
-            gl.canvas.height,
-            gl.canvas.width / gl.canvas.height
-          ),
+    try {
+      renderer = new Renderer({ alpha: true, premultipliedAlpha: false });
+      gl = renderer.gl;
+      gl.clearColor(0, 0, 0, 0);
+      container.appendChild(gl.canvas);
+
+      const geometry = new Triangle(gl);
+      program = new Program(gl, {
+        vertex: vert,
+        fragment: frag,
+        uniforms: {
+          iTime: { value: 0 },
+          iResolution: {
+            value: new Vec3(
+              gl.canvas.width,
+              gl.canvas.height,
+              gl.canvas.width / gl.canvas.height
+            ),
+          },
+          hue: { value: hue },
+          hover: { value: 0 },
+          rot: { value: 0 },
+          hoverIntensity: { value: hoverIntensity },
         },
-        hue: { value: hue },
-        hover: { value: 0 },
-        rot: { value: 0 },
-        hoverIntensity: { value: hoverIntensity },
-      },
-    });
+      });
 
-    const mesh = new Mesh(gl, { geometry, program });
+      mesh = new Mesh(gl, { geometry, program });
+    } catch (error) {
+      console.error("Failed to initialize WebGL:", error);
+      return;
+    }
 
     function resize() {
       if (!container) return;
@@ -252,6 +259,8 @@ export default function Orb({
 
     let rafId;
     const update = (t) => {
+      if (!renderer || !program || !mesh) return;
+
       rafId = requestAnimationFrame(update);
       const dt = (t - lastTime) * 0.001;
       lastTime = t;
@@ -268,7 +277,13 @@ export default function Orb({
       }
       program.uniforms.rot.value = currentRot;
 
-      renderer.render({ scene: mesh });
+      try {
+        renderer.render({ scene: mesh });
+      } catch (error) {
+        console.error("WebGL render error:", error);
+        cancelAnimationFrame(rafId);
+        return;
+      }
     };
     rafId = requestAnimationFrame(update);
 
@@ -277,8 +292,25 @@ export default function Orb({
       window.removeEventListener("resize", resize);
       container.removeEventListener("mousemove", handleMouseMove);
       container.removeEventListener("mouseleave", handleMouseLeave);
-      container.removeChild(gl.canvas);
-      gl.getExtension("WEBGL_lose_context")?.loseContext();
+
+      // Properly cleanup WebGL resources
+      try {
+        if (container && gl.canvas && container.contains(gl.canvas)) {
+          container.removeChild(gl.canvas);
+        }
+
+        // Force context loss to prevent memory leaks
+        const loseContext = gl.getExtension("WEBGL_lose_context");
+        if (loseContext) {
+          loseContext.loseContext();
+        }
+
+        // Clear any remaining references
+        mesh.geometry = null;
+        mesh.program = null;
+      } catch (error) {
+        console.warn("WebGL cleanup warning:", error);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hue, hoverIntensity, rotateOnHover, forceHoverState]);
