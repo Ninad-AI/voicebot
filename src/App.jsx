@@ -1,17 +1,20 @@
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import TextFillLoader from "./components/TextFillLoader";
 import MicButton from "./components/MicButton";
 import StartButton from "./components/StartButton";
 import Orb from "./components/Orb";
+import { blobToBase64 } from "./utils/audioUtils";
 
 function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingComplete, setRecordingComplete] = useState(false);
-  const [audioBlob, setAudioBlob] = useState(null);
+  const [, setAudioBlob] = useState(null);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [audioLevel, setAudioLevel] = useState(0);
+  const [, setAudioLevel] = useState(0);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   // Handle loading completion
   useEffect(() => {
@@ -33,6 +36,7 @@ function App() {
     if (!recording && blob) {
       setRecordingComplete(true);
       setAudioBlob(blob);
+      processRecordedAudio(blob);
     }
   };
 
@@ -52,15 +56,7 @@ function App() {
 
     // Mock API call to backend
     try {
-      const response = await fetch("/api/start-stream", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          audioData: audioBlob ? "audio-data-present" : "no-audio",
-        }),
-      });
+      
 
       // Simulate streaming started
       console.log("Stream started (mocked)");
@@ -68,7 +64,7 @@ function App() {
       // Simulate audio activity for orb animation
       simulateAudioActivity();
     } catch (error) {
-      console.log("Mock API call - backend not available yet");
+      console.warn("Mock API call - backend not available yet", error);
       // Still simulate streaming for demo purposes
       simulateAudioActivity();
     }
@@ -95,6 +91,48 @@ function App() {
     if (isRecording) {
       setAudioLevel(level);
     }
+  };
+
+  const processRecordedAudio = async (blob) => {
+    try {
+      setErrorMessage("");
+      setIsProcessing(true);
+      const dataUrl = await blobToBase64(blob);
+      const base64Payload = typeof dataUrl === "string" ? dataUrl.split(",")[1] || "" : "";
+      const resp = await fetch("http://localhost:8000/api/voice-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audio_base64: base64Payload }),
+      });
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}`);
+      }
+      const json = await resp.json();
+      if (!json || json.status !== "complete" || !json.audio_base64 || !json.sample_rate || !json.num_samples) {
+        throw new Error("Invalid response");
+      }
+      await playFloat32PCM(json.audio_base64, json.sample_rate, json.num_samples);
+    } catch (e) {
+      setErrorMessage("Failed to process audio");
+      console.error(e);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const playFloat32PCM = async (audioBase64, sampleRate, numSamples) => {
+    const binary = atob(audioBase64);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+    const float32 = new Float32Array(bytes.buffer);
+    const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
+    const buffer = ctx.createBuffer(1, numSamples, sampleRate);
+    buffer.copyToChannel(float32.subarray(0, numSamples), 0, 0);
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(ctx.destination);
+    src.start();
   };
 
   return (
@@ -156,7 +194,7 @@ function App() {
                   />
                   <StartButton
                     onClick={handleStartStream}
-                    disabled={isStreaming}
+                    disabled={isStreaming || isProcessing}
                     isStreaming={isStreaming}
                   />
                 </div>
@@ -176,6 +214,16 @@ function App() {
                   {isStreaming && (
                     <p className="text-white text-sm font-medium animate-pulse drop-shadow-lg">
                       Streaming active...
+                    </p>
+                  )}
+                  {isProcessing && (
+                    <p className="text-white text-sm font-medium animate-pulse drop-shadow-lg">
+                      Processing...
+                    </p>
+                  )}
+                  {!!errorMessage && (
+                    <p className="text-white text-sm font-medium drop-shadow-lg">
+                      {errorMessage}
                     </p>
                   )}
                 </div>
