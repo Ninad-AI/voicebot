@@ -41,7 +41,7 @@ function App() {
         }
     }, [recordingComplete]);
 
-    // Streaming playback from backend
+    // Streaming playback from backend (unchanged)
     async function playStreamingJSONLResponse(resp) {
         if (!resp.body) {
             throw new Error("Streaming not supported by this browser");
@@ -51,7 +51,7 @@ function App() {
         const textDecoder = new TextDecoder();
 
         const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-        const STREAM_SAMPLE_RATE = 38000;   // playback at 38kHz (slower)
+        const STREAM_SAMPLE_RATE = 38000;   // must match backend
         const PREBUFFER_SECONDS = 1.5;      // prebuffer to avoid tiny gaps
 
         const audioCtx = new AudioContextCtor({ sampleRate: STREAM_SAMPLE_RATE });
@@ -85,45 +85,7 @@ function App() {
             playHead += buffer.duration;
         };
 
-        const decodeAndScheduleChunk = (msg) => {
-            const b64 = msg.chunk;
-            if (!b64) return;
-
-            const binary = atob(b64);
-            const len = binary.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                bytes[i] = binary.charCodeAt(i);
-            }
-
-            const float32 = new Float32Array(bytes.buffer);
-            const ns = float32.length;
-
-            const buffer = audioCtx.createBuffer(1, ns, STREAM_SAMPLE_RATE);
-            buffer.copyToChannel(float32, 0, 0);
-
-            if (!started) {
-                pendingBuffers.push(buffer);
-                pendingDuration += buffer.duration;
-
-                if (pendingDuration >= PREBUFFER_SECONDS) {
-                    // Start playback with what we have buffered
-                    playHead = audioCtx.currentTime;
-                    for (const buf of pendingBuffers) {
-                        scheduleBuffer(buf);
-                    }
-                    pendingBuffers.length = 0;
-                    pendingDuration = 0;
-                    started = true;
-                }
-            } else {
-                // Already playing: schedule immediately after current playHead
-                scheduleBuffer(buffer);
-            }
-        };
-
         try {
-            // Main NDJSON streaming loop
             while (true) {
                 const { value, done } = await reader.read();
                 if (done) break;
@@ -148,32 +110,86 @@ function App() {
                     }
 
                     if (msg.type === "chunk") {
-                        decodeAndScheduleChunk(msg);
+                        const b64 = msg.chunk;
+
+                        const binary = atob(b64);
+                        const len = binary.length;
+                        const bytes = new Uint8Array(len);
+                        for (let i = 0; i < len; i++) {
+                            bytes[i] = binary.charCodeAt(i);
+                        }
+
+                        const float32 = new Float32Array(bytes.buffer);
+                        const ns = float32.length;
+
+                        const buffer = audioCtx.createBuffer(1, ns, STREAM_SAMPLE_RATE);
+                        buffer.copyToChannel(float32, 0, 0);
+
+                        if (!started) {
+                            pendingBuffers.push(buffer);
+                            pendingDuration += buffer.duration;
+
+                            if (pendingDuration >= PREBUFFER_SECONDS) {
+                                // Start playback with what we have buffered
+                                playHead = audioCtx.currentTime;
+                                for (const buf of pendingBuffers) {
+                                    scheduleBuffer(buf);
+                                }
+                                pendingBuffers.length = 0;
+                                pendingDuration = 0;
+                                started = true;
+                            }
+                        } else {
+                            // Already playing: schedule immediately after current playHead
+                            scheduleBuffer(buffer);
+                        }
                     } else if (msg.type === "error") {
                         console.error("Server stream error:", msg.message);
                     } else if (msg.type === "done") {
-                        // Terminal marker, stream will naturally end soon
+                        // terminal marker, nothing extra
                     }
                 }
             }
 
-            // Flush decoder and handle any remaining buffered JSON without newline
-            const remainingDecoded = textDecoder.decode();
-            if (remainingDecoded) {
-                textBuffer += remainingDecoded;
-            }
-            const remaining = textBuffer.trim();
-            if (remaining) {
-                let msg;
-                try {
-                    msg = JSON.parse(remaining);
-                } catch (err) {
-                    msg = null;
+            {
+                const remainingDecoded = textDecoder.decode();
+                if (remainingDecoded) {
+                    textBuffer += remainingDecoded;
                 }
-                if (msg && msg.type === "chunk") {
-                    decodeAndScheduleChunk(msg);
+                const remaining = textBuffer.trim();
+                if (remaining) {
+                    let msg;
+                    try {
+                        msg = JSON.parse(remaining);
+                    } catch (err) {
+                        msg = null;
+                    }
+                    if (msg && msg.type === "chunk") {
+                        const b64 = msg.chunk;
+
+                        const binary = atob(b64);
+                        const len = binary.length;
+                        const bytes = new Uint8Array(len);
+                        for (let i = 0; i < len; i++) {
+                            bytes[i] = binary.charCodeAt(i);
+                        }
+
+                        const float32 = new Float32Array(bytes.buffer);
+                        const ns = float32.length;
+
+                        const buffer = audioCtx.createBuffer(1, ns, STREAM_SAMPLE_RATE);
+                        buffer.copyToChannel(float32, 0, 0);
+
+                        if (!started) {
+                            pendingBuffers.push(buffer);
+                            pendingDuration += buffer.duration;
+                        } else {
+                            scheduleBuffer(buffer);
+                        }
+                    }
                 }
             }
+
 
             // If stream ended before we hit PREBUFFER_SECONDS, just play what we buffered
             if (!started && pendingBuffers.length > 0) {
@@ -193,10 +209,9 @@ function App() {
                 }
             }
 
-            // Wait for all scheduled buffers to finish playing, then small tail so last chunk never clips
+            // Wait for all scheduled buffers to finish playing
             if (sourceEndPromises.length > 0) {
                 await Promise.all(sourceEndPromises);
-                await new Promise((resolve) => setTimeout(resolve, 200));
             }
         } finally {
             try {
@@ -206,6 +221,7 @@ function App() {
             }
         }
     }
+
 
     // Send one utterance to backend and stream reply
     const processRecordedAudio = async (blob) => {
