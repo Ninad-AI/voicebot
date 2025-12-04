@@ -151,6 +151,46 @@ function App() {
                 }
             }
 
+            {
+                const remainingDecoded = textDecoder.decode();
+                if (remainingDecoded) {
+                    textBuffer += remainingDecoded;
+                }
+                const remaining = textBuffer.trim();
+                if (remaining) {
+                    let msg;
+                    try {
+                        msg = JSON.parse(remaining);
+                    } catch (err) {
+                        msg = null;
+                    }
+                    if (msg && msg.type === "chunk") {
+                        const b64 = msg.chunk;
+
+                        const binary = atob(b64);
+                        const len = binary.length;
+                        const bytes = new Uint8Array(len);
+                        for (let i = 0; i < len; i++) {
+                            bytes[i] = binary.charCodeAt(i);
+                        }
+
+                        const float32 = new Float32Array(bytes.buffer);
+                        const ns = float32.length;
+
+                        const buffer = audioCtx.createBuffer(1, ns, STREAM_SAMPLE_RATE);
+                        buffer.copyToChannel(float32, 0, 0);
+
+                        if (!started) {
+                            pendingBuffers.push(buffer);
+                            pendingDuration += buffer.duration;
+                        } else {
+                            scheduleBuffer(buffer);
+                        }
+                    }
+                }
+            }
+
+
             // If stream ended before we hit PREBUFFER_SECONDS, just play what we buffered
             if (!started && pendingBuffers.length > 0) {
                 let startTime = audioCtx.currentTime;
