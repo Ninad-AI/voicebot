@@ -194,7 +194,7 @@ function App() {
             const base64Payload =
                 typeof dataUrl === "string" ? dataUrl.split(",")[1] || "" : "";
 
-            const resp = await fetch("https://ninad-ai-server.onrender.com/api/voice-chat-stream", {
+            const resp = await fetch("https://ninad-ai-server.onrender.com/api/voice-chat", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ audio_base64: base64Payload }),
