@@ -51,7 +51,7 @@ function App() {
         const textDecoder = new TextDecoder();
 
         const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-        const STREAM_SAMPLE_RATE = 43000;   // must match backend
+        const STREAM_SAMPLE_RATE = 44100;   // must match backend
         const PREBUFFER_SECONDS = 1.5;      // prebuffer to avoid tiny gaps
 
         const audioCtx = new AudioContextCtor({ sampleRate: STREAM_SAMPLE_RATE });
@@ -268,7 +268,7 @@ function App() {
                 setIsRecording(true);
                 const blob = await recordUtteranceWithVAD({
                     noInputTimeoutMs: 5000, // 5s of no speech => end conversation
-                    silenceAfterSpeechMs: 600,
+                    silenceAfterSpeechMs: 800,
                     maxDurationMs: 30000,
                 });
 
