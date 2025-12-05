@@ -51,7 +51,7 @@ function App() {
         const textDecoder = new TextDecoder();
 
         const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-        const STREAM_SAMPLE_RATE = 40000;   // must match backend
+        const STREAM_SAMPLE_RATE = 44100;   // must match backend
         const PREBUFFER_SECONDS = 0.5;      // prebuffer to avoid tiny gaps
 
         const audioCtx = new AudioContextCtor({ sampleRate: STREAM_SAMPLE_RATE });
@@ -234,7 +234,7 @@ function App() {
             const base64Payload =
                 typeof dataUrl === "string" ? dataUrl.split(",")[1] || "" : "";
 
-            const resp = await fetch("https://ninad-ai-server.onrender.com/api/voice-chat", {
+            const resp = await fetch("http://https://ninad-ai-server.onrender.com", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ audio_base64: base64Payload }),
