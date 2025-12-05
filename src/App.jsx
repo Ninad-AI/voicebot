@@ -52,7 +52,7 @@ function App() {
 
         const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
         const STREAM_SAMPLE_RATE = 44100;   // must match backend
-        const PREBUFFER_SECONDS = 0.5;      // prebuffer to avoid tiny gaps
+        const PREBUFFER_SECONDS = 0.0;      // prebuffer to avoid tiny gaps
 
         const audioCtx = new AudioContextCtor({ sampleRate: STREAM_SAMPLE_RATE });
 
