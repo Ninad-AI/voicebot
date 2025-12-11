@@ -1,312 +1,100 @@
+// Final integrated App.jsx with full UI and updated WebRTC streaming logic
 import { useState, useRef, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import TextFillLoader from "./components/TextFillLoader";
 import MicButton from "./components/MicButton";
 import Orb from "./components/Orb";
-import { blobToBase64, recordUtteranceWithVAD } from "./utils/audioUtils";
 
 function App() {
     const [isLoading, setIsLoading] = useState(true);
-
-    // Conversation state
     const [conversationActive, setConversationActive] = useState(false);
-    const conversationActiveRef = useRef(false);
-
-    // Turn-level state
     const [isRecording, setIsRecording] = useState(false);
-    const [recordingComplete, setRecordingComplete] = useState(false);
     const [isStreaming, setIsStreaming] = useState(false);
-    const [isProcessing, setIsProcessing] = useState(false);
     const [errorMessage, setErrorMessage] = useState("");
 
-    // Loading animation
+    const conversationActiveRef = useRef(false);
+    const audioCtxRef = useRef(null);
+    const playTimeRef = useRef(0);
+
     useEffect(() => {
-        const maxLoadTimer = setTimeout(() => {
-            setIsLoading(false);
-        }, 8000);
+        const maxLoadTimer = setTimeout(() => setIsLoading(false), 8000);
         return () => clearTimeout(maxLoadTimer);
     }, []);
 
-    const handleLoadingComplete = () => {
-        setIsLoading(false);
-    };
+    const handleLoadingComplete = () => setIsLoading(false);
 
-    // Auto-reset recordingComplete visual flag
-    useEffect(() => {
-        if (recordingComplete) {
-            const timer = setTimeout(() => {
-                setRecordingComplete(false);
-            }, 2500);
-            return () => clearTimeout(timer);
-        }
-    }, [recordingComplete]);
+    const connectAndStream = async () => {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+            },
+        });
 
-    // Streaming playback from backend (unchanged)
-    async function playStreamingJSONLResponse(resp) {
-        if (!resp.body) {
-            throw new Error("Streaming not supported by this browser");
-        }
+        const pc = new RTCPeerConnection({
+            iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+        });
 
-        const reader = resp.body.getReader();
-        const textDecoder = new TextDecoder();
+        const ws = new WebSocket("wss://your-server-host:8765");
 
-        const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-        const STREAM_SAMPLE_RATE = 44100;   // must match backend
-        const PREBUFFER_SECONDS = 0.0;      // prebuffer to avoid tiny gaps
+        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-        const audioCtx = new AudioContextCtor({ sampleRate: STREAM_SAMPLE_RATE });
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === "chunk") {
+                const binary = atob(data.chunk);
+                const buf = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i);
 
-        let playHead = audioCtx.currentTime;
-        let started = false;
-        const pendingBuffers = [];
-        let pendingDuration = 0;
+                const float32 = new Float32Array(buf.buffer);
+                const ctx = audioCtxRef.current || new AudioContext({ sampleRate: 44100 });
+                audioCtxRef.current = ctx;
 
-        let textBuffer = "";
+                const audioBuf = ctx.createBuffer(1, float32.length, 44100);
+                audioBuf.copyToChannel(float32, 0);
 
-        // Track all sources so we can wait for playback to finish
-        const sourceEndPromises = [];
+                const src = ctx.createBufferSource();
+                src.buffer = audioBuf;
+                src.connect(ctx.destination);
 
-        const scheduleBuffer = (buffer) => {
-            const src = audioCtx.createBufferSource();
-            src.buffer = buffer;
-            src.connect(audioCtx.destination);
-
-            // Promise that resolves when this buffer finishes playing
-            const endPromise = new Promise((resolve) => {
-                src.onended = resolve;
-            });
-            sourceEndPromises.push(endPromise);
-
-            if (playHead < audioCtx.currentTime) {
-                playHead = audioCtx.currentTime;
+                const now = ctx.currentTime;
+                if (playTimeRef.current < now) playTimeRef.current = now + 0.02;
+                src.start(playTimeRef.current);
+                playTimeRef.current += audioBuf.duration;
             }
-
-            src.start(playHead);
-            playHead += buffer.duration;
         };
 
-        try {
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
+        ws.onopen = async () => {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            ws.send(JSON.stringify({ offer }));
+        };
 
-                textBuffer += textDecoder.decode(value, { stream: true });
+        pc.onicecandidate = (event) => {
+            if (event.candidate) ws.send(JSON.stringify({ ice: event.candidate }));
+        };
 
-                while (true) {
-                    const newlineIndex = textBuffer.indexOf("\n");
-                    if (newlineIndex === -1) break;
-
-                    const line = textBuffer.slice(0, newlineIndex).trim();
-                    textBuffer = textBuffer.slice(newlineIndex + 1);
-
-                    if (!line) continue;
-
-                    let msg;
-                    try {
-                        msg = JSON.parse(line);
-                    } catch (err) {
-                        console.error("Bad JSON from stream:", line);
-                        continue;
-                    }
-
-                    if (msg.type === "chunk") {
-                        const b64 = msg.chunk;
-
-                        const binary = atob(b64);
-                        const len = binary.length;
-                        const bytes = new Uint8Array(len);
-                        for (let i = 0; i < len; i++) {
-                            bytes[i] = binary.charCodeAt(i);
-                        }
-
-                        const float32 = new Float32Array(bytes.buffer);
-                        const ns = float32.length;
-
-                        const buffer = audioCtx.createBuffer(1, ns, STREAM_SAMPLE_RATE);
-                        buffer.copyToChannel(float32, 0, 0);
-
-                        if (!started) {
-                            pendingBuffers.push(buffer);
-                            pendingDuration += buffer.duration;
-
-                            if (pendingDuration >= PREBUFFER_SECONDS) {
-                                // Start playback with what we have buffered
-                                playHead = audioCtx.currentTime;
-                                for (const buf of pendingBuffers) {
-                                    scheduleBuffer(buf);
-                                }
-                                pendingBuffers.length = 0;
-                                pendingDuration = 0;
-                                started = true;
-                            }
-                        } else {
-                            // Already playing: schedule immediately after current playHead
-                            scheduleBuffer(buffer);
-                        }
-                    } else if (msg.type === "error") {
-                        console.error("Server stream error:", msg.message);
-                    } else if (msg.type === "done") {
-                        // terminal marker, nothing extra
-                    }
-                }
-            }
-
-            {
-                const remainingDecoded = textDecoder.decode();
-                if (remainingDecoded) {
-                    textBuffer += remainingDecoded;
-                }
-                const remaining = textBuffer.trim();
-                if (remaining) {
-                    let msg;
-                    try {
-                        msg = JSON.parse(remaining);
-                    } catch (err) {
-                        msg = null;
-                    }
-                    if (msg && msg.type === "chunk") {
-                        const b64 = msg.chunk;
-
-                        const binary = atob(b64);
-                        const len = binary.length;
-                        const bytes = new Uint8Array(len);
-                        for (let i = 0; i < len; i++) {
-                            bytes[i] = binary.charCodeAt(i);
-                        }
-
-                        const float32 = new Float32Array(bytes.buffer);
-                        const ns = float32.length;
-
-                        const buffer = audioCtx.createBuffer(1, ns, STREAM_SAMPLE_RATE);
-                        buffer.copyToChannel(float32, 0, 0);
-
-                        if (!started) {
-                            pendingBuffers.push(buffer);
-                            pendingDuration += buffer.duration;
-                        } else {
-                            scheduleBuffer(buffer);
-                        }
-                    }
-                }
-            }
-
-
-            // If stream ended before we hit PREBUFFER_SECONDS, just play what we buffered
-            if (!started && pendingBuffers.length > 0) {
-                let startTime = audioCtx.currentTime;
-                for (const buf of pendingBuffers) {
-                    const src = audioCtx.createBufferSource();
-                    src.buffer = buf;
-                    src.connect(audioCtx.destination);
-
-                    const endPromise = new Promise((resolve) => {
-                        src.onended = resolve;
-                    });
-                    sourceEndPromises.push(endPromise);
-
-                    src.start(startTime);
-                    startTime += buf.duration;
-                }
-            }
-
-            // Wait for all scheduled buffers to finish playing
-            if (sourceEndPromises.length > 0) {
-                await Promise.all(sourceEndPromises);
-            }
-        } finally {
-            try {
-                audioCtx.close();
-            } catch (_) {
-                // ignore
-            }
-        }
-    }
-
-
-    // Send one utterance to backend and stream reply
-    const processRecordedAudio = async (blob) => {
-        try {
-            setErrorMessage("");
-            setIsProcessing(true);
-            setIsStreaming(true);
-
-            const dataUrl = await blobToBase64(blob);
-            const base64Payload =
-                typeof dataUrl === "string" ? dataUrl.split(",")[1] || "" : "";
-
-            const resp = await fetch("https://ninad-ai-server.onrender.com/api/voice-chat", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ audio_base64: base64Payload }),
-            });
-
-            if (!resp.ok) {
-                throw new Error(`HTTP ${resp.status}`);
-            }
-
-            await playStreamingJSONLResponse(resp);
-        } catch (e) {
-            console.error(e);
-            setErrorMessage("Failed to process audio");
-        } finally {
-            setIsStreaming(false);
-            setIsProcessing(false);
-        }
+        ws.onmessage = async (event) => {
+            const data = JSON.parse(event.data);
+            if (data.answer) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        };
     };
 
-    // Main conversation loop: VAD record -> send -> play -> repeat
-    const runConversationLoop = async () => {
-        if (conversationActiveRef.current) return;
-
-        conversationActiveRef.current = true;
-        setConversationActive(true);
-        setErrorMessage("");
-
-        while (conversationActiveRef.current) {
-            try {
-                // 1) Listen with VAD
-                setIsRecording(true);
-                const blob = await recordUtteranceWithVAD({
-                    noInputTimeoutMs: 5000, // 5s of no speech => end conversation
-                    silenceAfterSpeechMs: 800,
-                    maxDurationMs: 30000,
-                });
-
-                setIsRecording(false);
-
-                if (!blob) {
-                    // user stayed silent for 5s -> end
-                    break;
-                }
-
-                setRecordingComplete(true);
-
-                // 2) Send to backend and play reply
-                await processRecordedAudio(blob);
-
-                setRecordingComplete(false);
-            } catch (err) {
-                console.error("Conversation loop error", err);
-                setErrorMessage("Recording or playback failed");
-                break;
-            }
-        }
-
-        conversationActiveRef.current = false;
-        setConversationActive(false);
-        setIsRecording(false);
-    };
-
-    // Mic click: start convo if idle. If already active, request stop after current turn.
     const handleMicClick = () => {
         if (!conversationActiveRef.current) {
-            runConversationLoop();
+            conversationActiveRef.current = true;
+            setConversationActive(true);
+            setIsRecording(true);
+            setErrorMessage("");
+            connectAndStream();
         } else {
             conversationActiveRef.current = false;
+            setConversationActive(false);
+            setIsRecording(false);
         }
     };
 
-    // Stop loop on unmount
     useEffect(() => {
         return () => {
             conversationActiveRef.current = false;
@@ -334,9 +122,7 @@ function App() {
                     >
                         <div
                             className="min-h-screen relative overflow-hidden"
-                            style={{
-                                background: "linear-gradient(to top, #FF7700 0%, #000000 75%)",
-                            }}
+                            style={{ background: "linear-gradient(to top, #FF7700 0%, #000000 75%)" }}
                         >
                             <div className="absolute inset-0 bg-gradient-to-t from-transparent via-transparent to-black/10 pointer-events-none"></div>
 
@@ -368,26 +154,15 @@ function App() {
 
                                 <div className="mt-8 text-center">
                                     {conversationActive && isRecording && (
-                                        <p className="text-white text-sm font-medium animate-pulse drop-shadow-lg">
-                                            Listening...
-                                        </p>
+                                        <p className="text-white text-sm font-medium animate-pulse drop-shadow-lg">Listening...</p>
                                     )}
                                     {isStreaming && (
-                                        <p className="text-white text-sm font-medium animate-pulse drop-shadow-lg">
-                                            Responding...
-                                        </p>
-                                    )}
-                                    {isProcessing && !isStreaming && (
-                                        <p className="text-white text-sm font-medium animate-pulse drop-shadow-lg">
-                                            Processing...
-                                        </p>
+                                        <p className="text-white text-sm font-medium animate-pulse drop-shadow-lg">Responding...</p>
                                     )}
                                     {!!errorMessage && (
-                                        <p className="text-white text-sm font-medium drop-shadow-lg">
-                                            {errorMessage}
-                                        </p>
+                                        <p className="text-white text-sm font-medium drop-shadow-lg">{errorMessage}</p>
                                     )}
-                                    {!conversationActive && !isProcessing && !isStreaming && (
+                                    {!conversationActive && !isStreaming && (
                                         <p className="text-white text-sm font-medium drop-shadow-lg">
                                             Tap the mic to start a conversation.
                                         </p>
