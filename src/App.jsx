@@ -36,7 +36,7 @@ function App() {
             iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
         });
 
-        const ws = new WebSocket("wss://your-server-host:8765");
+        const ws = new WebSocket("wss://ninad-ai-server.onrender.com/ws");
 
         stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
