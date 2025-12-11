@@ -1,4 +1,3 @@
-// Final integrated App.jsx with full UI and updated WebRTC streaming logic
 import { useState, useRef, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import TextFillLoader from "./components/TextFillLoader";
@@ -7,98 +6,236 @@ import Orb from "./components/Orb";
 
 function App() {
     const [isLoading, setIsLoading] = useState(true);
+
+    // Conversation state
     const [conversationActive, setConversationActive] = useState(false);
+    const conversationActiveRef = useRef(false);
+
     const [isRecording, setIsRecording] = useState(false);
     const [isStreaming, setIsStreaming] = useState(false);
+    const [isProcessing, setIsProcessing] = useState(false); // mostly unused now, but kept for UI compatibility
     const [errorMessage, setErrorMessage] = useState("");
 
-    const conversationActiveRef = useRef(false);
-    const audioCtxRef = useRef(null);
-    const playTimeRef = useRef(0);
+    // WebRTC + WS refs
+    const pcRef = useRef(null);
+    const wsRef = useRef(null);
+    const localStreamRef = useRef(null);
 
+    // Audio playback
+    const audioCtxRef = useRef(null);
+    const playHeadRef = useRef(0);
+
+    // Loading animation
     useEffect(() => {
-        const maxLoadTimer = setTimeout(() => setIsLoading(false), 8000);
+        const maxLoadTimer = setTimeout(() => {
+            setIsLoading(false);
+        }, 8000);
         return () => clearTimeout(maxLoadTimer);
     }, []);
 
-    const handleLoadingComplete = () => setIsLoading(false);
+    const handleLoadingComplete = () => {
+        setIsLoading(false);
+    };
 
-    const connectAndStream = async () => {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true,
-            },
-        });
+    // Create or reuse AudioContext
+    const getAudioContext = () => {
+        if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
+            return audioCtxRef.current;
+        }
 
-        const pc = new RTCPeerConnection({
-            iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-        });
+        const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+        const ctx = new AudioContextCtor({ sampleRate: 44100 });
+        audioCtxRef.current = ctx;
+        playHeadRef.current = ctx.currentTime;
+        return ctx;
+    };
 
-        const ws = new WebSocket("wss://ninad-ai-server.onrender.com/ws");
-
-        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            if (data.type === "chunk") {
-                const binary = atob(data.chunk);
-                const buf = new Uint8Array(binary.length);
-                for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i);
-
-                const float32 = new Float32Array(buf.buffer);
-                const ctx = audioCtxRef.current || new AudioContext({ sampleRate: 44100 });
-                audioCtxRef.current = ctx;
-
-                const audioBuf = ctx.createBuffer(1, float32.length, 44100);
-                audioBuf.copyToChannel(float32, 0);
-
-                const src = ctx.createBufferSource();
-                src.buffer = audioBuf;
-                src.connect(ctx.destination);
-
-                const now = ctx.currentTime;
-                if (playTimeRef.current < now) playTimeRef.current = now + 0.02;
-                src.start(playTimeRef.current);
-                playTimeRef.current += audioBuf.duration;
+    // Schedule one TTS chunk for playback
+    const playChunk = (base64Chunk) => {
+        try {
+            const binary = atob(base64Chunk);
+            const len = binary.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binary.charCodeAt(i);
             }
-        };
 
-        ws.onopen = async () => {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            ws.send(JSON.stringify({ offer }));
-        };
+            const float32 = new Float32Array(bytes.buffer);
+            const STREAM_SAMPLE_RATE = 44100;
 
-        pc.onicecandidate = (event) => {
-            if (event.candidate) ws.send(JSON.stringify({ ice: event.candidate }));
-        };
+            const ctx = getAudioContext();
+            const buffer = ctx.createBuffer(1, float32.length, STREAM_SAMPLE_RATE);
+            buffer.copyToChannel(float32, 0, 0);
 
-        ws.onmessage = async (event) => {
-            const data = JSON.parse(event.data);
-            if (data.answer) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-        };
+            const src = ctx.createBufferSource();
+            src.buffer = buffer;
+            src.connect(ctx.destination);
+
+            const now = ctx.currentTime;
+            if (playHeadRef.current < now) {
+                playHeadRef.current = now + 0.02; // tiny jitter buffer
+            }
+
+            src.start(playHeadRef.current);
+            playHeadRef.current += buffer.duration;
+        } catch (err) {
+            console.error("Failed to play chunk", err);
+        }
+    };
+
+    const cleanupConnection = () => {
+        try {
+            if (pcRef.current) {
+                pcRef.current.getSenders().forEach((sender) => {
+                    try {
+                        if (sender.track) sender.track.stop();
+                    } catch (_) {}
+                });
+                pcRef.current.close();
+            }
+        } catch (_) {}
+
+        try {
+            if (localStreamRef.current) {
+                localStreamRef.current.getTracks().forEach((t) => t.stop());
+            }
+        } catch (_) {}
+
+        try {
+            if (wsRef.current) {
+                wsRef.current.close();
+            }
+        } catch (_) {}
+
+        pcRef.current = null;
+        wsRef.current = null;
+        localStreamRef.current = null;
+
+        setIsRecording(false);
+        setIsStreaming(false);
+        setIsProcessing(false);
+    };
+
+    const startWebRTCSession = async () => {
+        try {
+            setErrorMessage("");
+            setIsProcessing(true);
+            setIsRecording(true);
+
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                },
+            });
+            localStreamRef.current = stream;
+
+            const pc = new RTCPeerConnection({
+                iceServers: [
+                    { urls: "stun:stun.l.google.com:19302" },
+                ],
+            });
+            pcRef.current = pc;
+
+            stream.getTracks().forEach((track) => {
+                pc.addTrack(track, stream);
+            });
+
+            const ws = new WebSocket("wss://ninad-ai-server.onrender.com/ws");
+            wsRef.current = ws;
+
+            ws.onopen = async () => {
+                try {
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    ws.send(JSON.stringify({ offer }));
+                } catch (err) {
+                    console.error("Error creating/sending offer", err);
+                    setErrorMessage("Failed to start WebRTC session");
+                    cleanupConnection();
+                }
+            };
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ ice: event.candidate }));
+                }
+            };
+
+            ws.onmessage = async (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+
+                    // Signaling answer from backend
+                    if (data.answer) {
+                        await pc.setRemoteDescription(
+                            new RTCSessionDescription(data.answer)
+                        );
+                        return;
+                    }
+
+                    // Streaming audio chunk from backend
+                    if (data.type === "chunk") {
+                        setIsStreaming(true);
+                        playChunk(data.chunk);
+                        return;
+                    }
+
+                    if (data.type === "done") {
+                        setIsStreaming(false);
+                        return;
+                    }
+
+                    if (data.type === "error") {
+                        console.error("Server error:", data.message);
+                        setErrorMessage("Server error: " + (data.message || "unknown"));
+                        return;
+                    }
+                } catch (err) {
+                    console.error("Bad WS message", err);
+                }
+            };
+
+            ws.onerror = (event) => {
+                console.error("WebSocket error", event);
+                setErrorMessage("WebSocket error");
+            };
+
+            ws.onclose = () => {
+                if (conversationActiveRef.current) {
+                    setErrorMessage("Connection closed");
+                }
+                cleanupConnection();
+            };
+
+            setIsProcessing(false);
+        } catch (err) {
+            console.error("Failed to start WebRTC session", err);
+            setErrorMessage("Mic or connection failed");
+            cleanupConnection();
+        }
     };
 
     const handleMicClick = () => {
         if (!conversationActiveRef.current) {
             conversationActiveRef.current = true;
             setConversationActive(true);
-            setIsRecording(true);
             setErrorMessage("");
-            connectAndStream();
+            startWebRTCSession();
         } else {
             conversationActiveRef.current = false;
             setConversationActive(false);
-            setIsRecording(false);
+            cleanupConnection();
         }
     };
 
     useEffect(() => {
         return () => {
             conversationActiveRef.current = false;
+            cleanupConnection();
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     return (
@@ -122,7 +259,9 @@ function App() {
                     >
                         <div
                             className="min-h-screen relative overflow-hidden"
-                            style={{ background: "linear-gradient(to top, #FF7700 0%, #000000 75%)" }}
+                            style={{
+                                background: "linear-gradient(to top, #FF7700 0%, #000000 75%)",
+                            }}
                         >
                             <div className="absolute inset-0 bg-gradient-to-t from-transparent via-transparent to-black/10 pointer-events-none"></div>
 
@@ -154,15 +293,26 @@ function App() {
 
                                 <div className="mt-8 text-center">
                                     {conversationActive && isRecording && (
-                                        <p className="text-white text-sm font-medium animate-pulse drop-shadow-lg">Listening...</p>
+                                        <p className="text-white text-sm font-medium animate-pulse drop-shadow-lg">
+                                            Listening...
+                                        </p>
                                     )}
                                     {isStreaming && (
-                                        <p className="text-white text-sm font-medium animate-pulse drop-shadow-lg">Responding...</p>
+                                        <p className="text-white text-sm font-medium animate-pulse drop-shadow-lg">
+                                            Responding...
+                                        </p>
+                                    )}
+                                    {isProcessing && !isStreaming && (
+                                        <p className="text-white text-sm font-medium animate-pulse drop-shadow-lg">
+                                            Processing...
+                                        </p>
                                     )}
                                     {!!errorMessage && (
-                                        <p className="text-white text-sm font-medium drop-shadow-lg">{errorMessage}</p>
+                                        <p className="text-white text-sm font-medium drop-shadow-lg">
+                                            {errorMessage}
+                                        </p>
                                     )}
-                                    {!conversationActive && !isStreaming && (
+                                    {!conversationActive && !isProcessing && !isStreaming && (
                                         <p className="text-white text-sm font-medium drop-shadow-lg">
                                             Tap the mic to start a conversation.
                                         </p>
