@@ -3,7 +3,6 @@ import { AnimatePresence, motion } from "framer-motion";
 import TextFillLoader from "./components/TextFillLoader";
 import MicButton from "./components/MicButton";
 import Orb from "./components/Orb";
-import { blobToBase64, recordUtteranceWithVAD } from "./utils/audioUtils";
 
 function App() {
     const [isLoading, setIsLoading] = useState(true);
@@ -12,12 +11,19 @@ function App() {
     const [conversationActive, setConversationActive] = useState(false);
     const conversationActiveRef = useRef(false);
 
-    // Turn-level state
     const [isRecording, setIsRecording] = useState(false);
-    const [recordingComplete, setRecordingComplete] = useState(false);
     const [isStreaming, setIsStreaming] = useState(false);
-    const [isProcessing, setIsProcessing] = useState(false);
+    const [isProcessing, setIsProcessing] = useState(false); // mostly unused now, but kept for UI compatibility
     const [errorMessage, setErrorMessage] = useState("");
+
+    // WebRTC + WS refs
+    const pcRef = useRef(null);
+    const wsRef = useRef(null);
+    const localStreamRef = useRef(null);
+
+    // Audio playback
+    const audioCtxRef = useRef(null);
+    const playHeadRef = useRef(0);
 
     // Loading animation
     useEffect(() => {
@@ -31,286 +37,205 @@ function App() {
         setIsLoading(false);
     };
 
-    // Auto-reset recordingComplete visual flag
-    useEffect(() => {
-        if (recordingComplete) {
-            const timer = setTimeout(() => {
-                setRecordingComplete(false);
-            }, 2500);
-            return () => clearTimeout(timer);
+    // Create or reuse AudioContext
+    const getAudioContext = () => {
+        if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
+            return audioCtxRef.current;
         }
-    }, [recordingComplete]);
-
-    // Streaming playback from backend (unchanged)
-    async function playStreamingJSONLResponse(resp) {
-        if (!resp.body) {
-            throw new Error("Streaming not supported by this browser");
-        }
-
-        const reader = resp.body.getReader();
-        const textDecoder = new TextDecoder();
 
         const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-        const STREAM_SAMPLE_RATE = 44100;   // must match backend
-        const PREBUFFER_SECONDS = 0.0;      // prebuffer to avoid tiny gaps
+        const ctx = new AudioContextCtor({ sampleRate: 44100 });
+        audioCtxRef.current = ctx;
+        playHeadRef.current = ctx.currentTime;
+        return ctx;
+    };
 
-        const audioCtx = new AudioContextCtor({ sampleRate: STREAM_SAMPLE_RATE });
-
-        let playHead = audioCtx.currentTime;
-        let started = false;
-        const pendingBuffers = [];
-        let pendingDuration = 0;
-
-        let textBuffer = "";
-
-        // Track all sources so we can wait for playback to finish
-        const sourceEndPromises = [];
-
-        const scheduleBuffer = (buffer) => {
-            const src = audioCtx.createBufferSource();
-            src.buffer = buffer;
-            src.connect(audioCtx.destination);
-
-            // Promise that resolves when this buffer finishes playing
-            const endPromise = new Promise((resolve) => {
-                src.onended = resolve;
-            });
-            sourceEndPromises.push(endPromise);
-
-            if (playHead < audioCtx.currentTime) {
-                playHead = audioCtx.currentTime;
+    // Schedule one TTS chunk for playback
+    const playChunk = (base64Chunk) => {
+        try {
+            const binary = atob(base64Chunk);
+            const len = binary.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binary.charCodeAt(i);
             }
 
-            src.start(playHead);
-            playHead += buffer.duration;
-        };
+            const float32 = new Float32Array(bytes.buffer);
+            const STREAM_SAMPLE_RATE = 44100;
+
+            const ctx = getAudioContext();
+            const buffer = ctx.createBuffer(1, float32.length, STREAM_SAMPLE_RATE);
+            buffer.copyToChannel(float32, 0, 0);
+
+            const src = ctx.createBufferSource();
+            src.buffer = buffer;
+            src.connect(ctx.destination);
+
+            const now = ctx.currentTime;
+            if (playHeadRef.current < now) {
+                playHeadRef.current = now + 0.02; // tiny jitter buffer
+            }
+
+            src.start(playHeadRef.current);
+            playHeadRef.current += buffer.duration;
+        } catch (err) {
+            console.error("Failed to play chunk", err);
+        }
+    };
+
+    const cleanupConnection = () => {
+        try {
+            if (pcRef.current) {
+                pcRef.current.getSenders().forEach((sender) => {
+                    try {
+                        if (sender.track) sender.track.stop();
+                    } catch (_) {}
+                });
+                pcRef.current.close();
+            }
+        } catch (_) {}
 
         try {
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
-
-                textBuffer += textDecoder.decode(value, { stream: true });
-
-                while (true) {
-                    const newlineIndex = textBuffer.indexOf("\n");
-                    if (newlineIndex === -1) break;
-
-                    const line = textBuffer.slice(0, newlineIndex).trim();
-                    textBuffer = textBuffer.slice(newlineIndex + 1);
-
-                    if (!line) continue;
-
-                    let msg;
-                    try {
-                        msg = JSON.parse(line);
-                    } catch (err) {
-                        console.error("Bad JSON from stream:", line);
-                        continue;
-                    }
-
-                    if (msg.type === "chunk") {
-                        const b64 = msg.chunk;
-
-                        const binary = atob(b64);
-                        const len = binary.length;
-                        const bytes = new Uint8Array(len);
-                        for (let i = 0; i < len; i++) {
-                            bytes[i] = binary.charCodeAt(i);
-                        }
-
-                        const float32 = new Float32Array(bytes.buffer);
-                        const ns = float32.length;
-
-                        const buffer = audioCtx.createBuffer(1, ns, STREAM_SAMPLE_RATE);
-                        buffer.copyToChannel(float32, 0, 0);
-
-                        if (!started) {
-                            pendingBuffers.push(buffer);
-                            pendingDuration += buffer.duration;
-
-                            if (pendingDuration >= PREBUFFER_SECONDS) {
-                                // Start playback with what we have buffered
-                                playHead = audioCtx.currentTime;
-                                for (const buf of pendingBuffers) {
-                                    scheduleBuffer(buf);
-                                }
-                                pendingBuffers.length = 0;
-                                pendingDuration = 0;
-                                started = true;
-                            }
-                        } else {
-                            // Already playing: schedule immediately after current playHead
-                            scheduleBuffer(buffer);
-                        }
-                    } else if (msg.type === "error") {
-                        console.error("Server stream error:", msg.message);
-                    } else if (msg.type === "done") {
-                        // terminal marker, nothing extra
-                    }
-                }
+            if (localStreamRef.current) {
+                localStreamRef.current.getTracks().forEach((t) => t.stop());
             }
+        } catch (_) {}
 
-            {
-                const remainingDecoded = textDecoder.decode();
-                if (remainingDecoded) {
-                    textBuffer += remainingDecoded;
-                }
-                const remaining = textBuffer.trim();
-                if (remaining) {
-                    let msg;
-                    try {
-                        msg = JSON.parse(remaining);
-                    } catch (err) {
-                        msg = null;
-                    }
-                    if (msg && msg.type === "chunk") {
-                        const b64 = msg.chunk;
-
-                        const binary = atob(b64);
-                        const len = binary.length;
-                        const bytes = new Uint8Array(len);
-                        for (let i = 0; i < len; i++) {
-                            bytes[i] = binary.charCodeAt(i);
-                        }
-
-                        const float32 = new Float32Array(bytes.buffer);
-                        const ns = float32.length;
-
-                        const buffer = audioCtx.createBuffer(1, ns, STREAM_SAMPLE_RATE);
-                        buffer.copyToChannel(float32, 0, 0);
-
-                        if (!started) {
-                            pendingBuffers.push(buffer);
-                            pendingDuration += buffer.duration;
-                        } else {
-                            scheduleBuffer(buffer);
-                        }
-                    }
-                }
+        try {
+            if (wsRef.current) {
+                wsRef.current.close();
             }
+        } catch (_) {}
 
+        pcRef.current = null;
+        wsRef.current = null;
+        localStreamRef.current = null;
 
-            // If stream ended before we hit PREBUFFER_SECONDS, just play what we buffered
-            if (!started && pendingBuffers.length > 0) {
-                let startTime = audioCtx.currentTime;
-                for (const buf of pendingBuffers) {
-                    const src = audioCtx.createBufferSource();
-                    src.buffer = buf;
-                    src.connect(audioCtx.destination);
+        setIsRecording(false);
+        setIsStreaming(false);
+        setIsProcessing(false);
+    };
 
-                    const endPromise = new Promise((resolve) => {
-                        src.onended = resolve;
-                    });
-                    sourceEndPromises.push(endPromise);
-
-                    src.start(startTime);
-                    startTime += buf.duration;
-                }
-            }
-
-            // Wait for all scheduled buffers to finish playing
-            if (sourceEndPromises.length > 0) {
-                await Promise.all(sourceEndPromises);
-            }
-        } finally {
-            try {
-                audioCtx.close();
-            } catch (_) {
-                // ignore
-            }
-        }
-    }
-
-
-    // Send one utterance to backend and stream reply
-    const processRecordedAudio = async (blob) => {
+    const startWebRTCSession = async () => {
         try {
             setErrorMessage("");
             setIsProcessing(true);
-            setIsStreaming(true);
+            setIsRecording(true);
 
-            const dataUrl = await blobToBase64(blob);
-            const base64Payload =
-                typeof dataUrl === "string" ? dataUrl.split(",")[1] || "" : "";
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                },
+            });
+            localStreamRef.current = stream;
 
-            const resp = await fetch("https://ninad-ai-server.onrender.com/api/voice-chat", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ audio_base64: base64Payload }),
+            const pc = new RTCPeerConnection({
+                iceServers: [
+                    { urls: "stun:stun.l.google.com:19302" },
+                ],
+            });
+            pcRef.current = pc;
+
+            stream.getTracks().forEach((track) => {
+                pc.addTrack(track, stream);
             });
 
-            if (!resp.ok) {
-                throw new Error(`HTTP ${resp.status}`);
-            }
+            const ws = new WebSocket("wss://ninad-ai-server.onrender.com/ws");
+            wsRef.current = ws;
 
-            await playStreamingJSONLResponse(resp);
-        } catch (e) {
-            console.error(e);
-            setErrorMessage("Failed to process audio");
-        } finally {
-            setIsStreaming(false);
-            setIsProcessing(false);
-        }
-    };
-
-    // Main conversation loop: VAD record -> send -> play -> repeat
-    const runConversationLoop = async () => {
-        if (conversationActiveRef.current) return;
-
-        conversationActiveRef.current = true;
-        setConversationActive(true);
-        setErrorMessage("");
-
-        while (conversationActiveRef.current) {
-            try {
-                // 1) Listen with VAD
-                setIsRecording(true);
-                const blob = await recordUtteranceWithVAD({
-                    noInputTimeoutMs: 5000, // 5s of no speech => end conversation
-                    silenceAfterSpeechMs: 800,
-                    maxDurationMs: 30000,
-                });
-
-                setIsRecording(false);
-
-                if (!blob) {
-                    // user stayed silent for 5s -> end
-                    break;
+            ws.onopen = async () => {
+                try {
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    ws.send(JSON.stringify({ offer }));
+                } catch (err) {
+                    console.error("Error creating/sending offer", err);
+                    setErrorMessage("Failed to start WebRTC session");
+                    cleanupConnection();
                 }
+            };
 
-                setRecordingComplete(true);
+            pc.onicecandidate = (event) => {
+                if (event.candidate && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ ice: event.candidate }));
+                }
+            };
 
-                // 2) Send to backend and play reply
-                await processRecordedAudio(blob);
+            ws.onmessage = async (event) => {
+                try {
+                    const data = JSON.parse(event.data);
 
-                setRecordingComplete(false);
-            } catch (err) {
-                console.error("Conversation loop error", err);
-                setErrorMessage("Recording or playback failed");
-                break;
-            }
+                    // Signaling answer from backend
+                    if (data.answer) {
+                        await pc.setRemoteDescription(
+                            new RTCSessionDescription(data.answer)
+                        );
+                        return;
+                    }
+
+                    // Streaming audio chunk from backend
+                    if (data.type === "chunk") {
+                        setIsStreaming(true);
+                        playChunk(data.chunk);
+                        return;
+                    }
+
+                    if (data.type === "done") {
+                        setIsStreaming(false);
+                        return;
+                    }
+
+                    if (data.type === "error") {
+                        console.error("Server error:", data.message);
+                        setErrorMessage("Server error: " + (data.message || "unknown"));
+                        return;
+                    }
+                } catch (err) {
+                    console.error("Bad WS message", err);
+                }
+            };
+
+            ws.onerror = (event) => {
+                console.error("WebSocket error", event);
+                setErrorMessage("WebSocket error");
+            };
+
+            ws.onclose = () => {
+                if (conversationActiveRef.current) {
+                    setErrorMessage("Connection closed");
+                }
+                cleanupConnection();
+            };
+
+            setIsProcessing(false);
+        } catch (err) {
+            console.error("Failed to start WebRTC session", err);
+            setErrorMessage("Mic or connection failed");
+            cleanupConnection();
         }
-
-        conversationActiveRef.current = false;
-        setConversationActive(false);
-        setIsRecording(false);
     };
 
-    // Mic click: start convo if idle. If already active, request stop after current turn.
     const handleMicClick = () => {
         if (!conversationActiveRef.current) {
-            runConversationLoop();
+            conversationActiveRef.current = true;
+            setConversationActive(true);
+            setErrorMessage("");
+            startWebRTCSession();
         } else {
             conversationActiveRef.current = false;
+            setConversationActive(false);
+            cleanupConnection();
         }
     };
 
-    // Stop loop on unmount
     useEffect(() => {
         return () => {
             conversationActiveRef.current = false;
+            cleanupConnection();
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     return (
