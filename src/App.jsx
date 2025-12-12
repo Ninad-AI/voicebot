@@ -13,7 +13,7 @@ function App() {
 
     const [isRecording, setIsRecording] = useState(false);
     const [isStreaming, setIsStreaming] = useState(false);
-    const [isProcessing, setIsProcessing] = useState(false); // mostly unused now, but kept for UI compatibility
+    const [isProcessing, setIsProcessing] = useState(false);
     const [errorMessage, setErrorMessage] = useState("");
 
     // WebRTC + WS refs
@@ -102,7 +102,7 @@ function App() {
         } catch (_) {}
 
         try {
-            if (wsRef.current) {
+            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                 wsRef.current.close();
             }
         } catch (_) {}
@@ -122,6 +122,7 @@ function App() {
             setIsProcessing(true);
             setIsRecording(true);
 
+            // 1. Get mic
             const stream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     echoCancellation: true,
@@ -131,10 +132,9 @@ function App() {
             });
             localStreamRef.current = stream;
 
+            // 2. Create RTCPeerConnection and add tracks
             const pc = new RTCPeerConnection({
-                iceServers: [
-                    { urls: "stun:stun.l.google.com:19302" },
-                ],
+                iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
             });
             pcRef.current = pc;
 
@@ -142,18 +142,31 @@ function App() {
                 pc.addTrack(track, stream);
             });
 
+            // 3. Create offer BEFORE opening WebSocket
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+
+            // 4. Open WebSocket for signaling + audio chunks
             const ws = new WebSocket("wss://ninad-ai-server.onrender.com/ws");
             wsRef.current = ws;
 
-            ws.onopen = async () => {
+            ws.onopen = () => {
                 try {
-                    const offer = await pc.createOffer();
-                    await pc.setLocalDescription(offer);
-                    ws.send(JSON.stringify({ offer }));
+                    const desc = pc.localDescription;
+                    if (!desc) {
+                        throw new Error("Missing localDescription");
+                    }
+                    ws.send(
+                        JSON.stringify({
+                            offer: {
+                                type: desc.type,
+                                sdp: desc.sdp,
+                            },
+                        })
+                    );
                 } catch (err) {
-                    console.error("Error creating/sending offer", err);
-                    setErrorMessage("Failed to start WebRTC session");
-                    cleanupConnection();
+                    console.error("Failed to send offer over WS", err);
+                    setErrorMessage("Failed to send offer");
                 }
             };
 
@@ -202,7 +215,12 @@ function App() {
                 setErrorMessage("WebSocket error");
             };
 
-            ws.onclose = () => {
+            ws.onclose = (event) => {
+                console.log(
+                    "WebSocket closed",
+                    event.code,
+                    event.reason || "<no reason>"
+                );
                 if (conversationActiveRef.current) {
                     setErrorMessage("Connection closed");
                 }
@@ -212,7 +230,11 @@ function App() {
             setIsProcessing(false);
         } catch (err) {
             console.error("Failed to start WebRTC session", err);
-            setErrorMessage("Mic or connection failed");
+            if (err && err.name === "NotAllowedError") {
+                setErrorMessage("Microphone permission denied");
+            } else {
+                setErrorMessage("Mic or connection failed");
+            }
             cleanupConnection();
         }
     };
