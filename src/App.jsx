@@ -5,6 +5,8 @@ import MicButton from "./components/MicButton";
 import Orb from "./components/Orb";
 import { blobToBase64, recordUtteranceWithVAD } from "./utils/audioUtils";
 
+const BACKEND_URL = "http://localhost:8000";
+
 function App() {
     const [isLoading, setIsLoading] = useState(true);
 
@@ -18,6 +20,11 @@ function App() {
     const [isStreaming, setIsStreaming] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
     const [errorMessage, setErrorMessage] = useState("");
+
+    // Audio playback
+    const audioContextRef = useRef(null);
+    const playHeadRef = useRef(0);
+    const sourceEndPromisesRef = useRef([]);
 
     // Loading animation
     useEffect(() => {
@@ -41,7 +48,170 @@ function App() {
         }
     }, [recordingComplete]);
 
-    // Streaming playback from backend (unchanged)
+    // Initialize audio context
+    const getAudioContext = () => {
+        if (!audioContextRef.current) {
+            const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+            audioContextRef.current = new AudioContextCtor();
+            playHeadRef.current = audioContextRef.current.currentTime;
+            sourceEndPromisesRef.current = [];
+        }
+        return audioContextRef.current;
+    };
+
+    // Schedule audio buffer for playback
+    const scheduleBuffer = (buffer) => {
+        const audioCtx = getAudioContext();
+        const src = audioCtx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(audioCtx.destination);
+
+        const endPromise = new Promise((resolve) => {
+            src.onended = resolve;
+        });
+        sourceEndPromisesRef.current.push(endPromise);
+
+        if (playHeadRef.current < audioCtx.currentTime) {
+            playHeadRef.current = audioCtx.currentTime;
+        }
+
+        src.start(playHeadRef.current);
+        playHeadRef.current += buffer.duration;
+    };
+
+    // Process binary audio chunk
+    const processBinaryChunk = (arrayBuffer) => {
+        const pcmData = new Float32Array(arrayBuffer);
+        const sampleRate = 44100; // must match model output
+
+        const audioCtx = getAudioContext();
+        const buffer = audioCtx.createBuffer(1, pcmData.length, sampleRate);
+        buffer.copyToChannel(pcmData, 0, 0);
+
+        scheduleBuffer(buffer);
+    };
+
+
+
+
+    // WebSocket-based audio processing (new approach)
+    const processRecordedAudioWS = async (blob) => {
+        return new Promise((resolve, reject) => {
+            try {
+                setErrorMessage("");
+                setIsProcessing(true);
+                setIsStreaming(true);
+
+                const ws = new WebSocket(`${BACKEND_URL.replace('http', 'ws')}/ws`);
+                ws.binaryType = "arraybuffer";
+
+                ws.onopen = () => {
+                    console.log("WebSocket connected, sending audio...");
+                    blob.arrayBuffer().then(buffer => {
+                        ws.send(buffer);          // send full audio
+                        ws.send("__END__");       // 🔑 SIGNAL END OF INPUT
+                    });
+                };
+
+                ws.onmessage = async (event) => {
+                    // 1️⃣ Binary audio chunk
+                    if (event.data instanceof ArrayBuffer) {
+                        processBinaryChunk(event.data);
+                        return;
+                    }
+
+                    // 2️⃣ Text control message (string OR Blob)
+                    let text;
+                    if (typeof event.data === "string") {
+                        text = event.data;
+                    } else if (event.data instanceof Blob) {
+                        text = await event.data.text();
+                    } else {
+                        console.warn("Unknown WS message type", event.data);
+                        return;
+                    }
+
+                    try {
+                        const msg = JSON.parse(text);
+
+                        if (msg.type === "done") {
+                            console.log("Stream complete");
+                            ws.close();
+                        } else if (msg.type === "error") {
+                            console.error("Server error:", msg.message);
+                            setErrorMessage(msg.message);
+                            ws.close();
+                        }
+                    } catch (e) {
+                        console.error("Failed to parse WS message:", text, e);
+                    }
+                };
+
+
+
+
+                ws.onerror = (error) => {
+                    console.error("WebSocket error:", error);
+                    setErrorMessage("WebSocket connection failed");
+                    reject(error);
+                };
+
+                ws.onclose = async () => {
+                    console.log("WebSocket closed");
+
+                    // Wait for all audio to finish playing
+                    if (sourceEndPromisesRef.current.length > 0) {
+                        await Promise.all(sourceEndPromisesRef.current);
+                        sourceEndPromisesRef.current = [];
+                    }
+
+                    setIsStreaming(false);
+                    setIsProcessing(false);
+                    resolve();
+                };
+
+            } catch (e) {
+                console.error(e);
+                setErrorMessage("Failed to process audio");
+                setIsStreaming(false);
+                setIsProcessing(false);
+                reject(e);
+            }
+        });
+    };
+
+    // Legacy HTTP-based processing (fallback)
+    const processRecordedAudioHTTP = async (blob) => {
+        try {
+            setErrorMessage("");
+            setIsProcessing(true);
+            setIsStreaming(true);
+
+            const dataUrl = await blobToBase64(blob);
+            const base64Payload =
+                typeof dataUrl === "string" ? dataUrl.split(",")[1] || "" : "";
+
+            const resp = await fetch(`${BACKEND_URL}/api/voice-chat`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ audio_base64: base64Payload }),
+            });
+
+            if (!resp.ok) {
+                throw new Error(`HTTP ${resp.status}`);
+            }
+
+            await playStreamingJSONLResponse(resp);
+        } catch (e) {
+            console.error(e);
+            setErrorMessage("Failed to process audio");
+        } finally {
+            setIsStreaming(false);
+            setIsProcessing(false);
+        }
+    };
+
+    // Legacy JSONL streaming (for backward compatibility)
     async function playStreamingJSONLResponse(resp) {
         if (!resp.body) {
             throw new Error("Streaming not supported by this browser");
@@ -49,41 +219,9 @@ function App() {
 
         const reader = resp.body.getReader();
         const textDecoder = new TextDecoder();
-
-        const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-        const STREAM_SAMPLE_RATE = 44100;   // must match backend
-        const PREBUFFER_SECONDS = 0.0;      // prebuffer to avoid tiny gaps
-
-        const audioCtx = new AudioContextCtor({ sampleRate: STREAM_SAMPLE_RATE });
-
-        let playHead = audioCtx.currentTime;
-        let started = false;
-        const pendingBuffers = [];
-        let pendingDuration = 0;
+        const audioCtx = getAudioContext();
 
         let textBuffer = "";
-
-        // Track all sources so we can wait for playback to finish
-        const sourceEndPromises = [];
-
-        const scheduleBuffer = (buffer) => {
-            const src = audioCtx.createBufferSource();
-            src.buffer = buffer;
-            src.connect(audioCtx.destination);
-
-            // Promise that resolves when this buffer finishes playing
-            const endPromise = new Promise((resolve) => {
-                src.onended = resolve;
-            });
-            sourceEndPromises.push(endPromise);
-
-            if (playHead < audioCtx.currentTime) {
-                playHead = audioCtx.currentTime;
-            }
-
-            src.start(playHead);
-            playHead += buffer.duration;
-        };
 
         try {
             while (true) {
@@ -111,7 +249,6 @@ function App() {
 
                     if (msg.type === "chunk") {
                         const b64 = msg.chunk;
-
                         const binary = atob(b64);
                         const len = binary.length;
                         const bytes = new Uint8Array(len);
@@ -120,141 +257,24 @@ function App() {
                         }
 
                         const float32 = new Float32Array(bytes.buffer);
-                        const ns = float32.length;
-
-                        const buffer = audioCtx.createBuffer(1, ns, STREAM_SAMPLE_RATE);
+                        const buffer = audioCtx.createBuffer(1, float32.length, msg.sample_rate);
                         buffer.copyToChannel(float32, 0, 0);
-
-                        if (!started) {
-                            pendingBuffers.push(buffer);
-                            pendingDuration += buffer.duration;
-
-                            if (pendingDuration >= PREBUFFER_SECONDS) {
-                                // Start playback with what we have buffered
-                                playHead = audioCtx.currentTime;
-                                for (const buf of pendingBuffers) {
-                                    scheduleBuffer(buf);
-                                }
-                                pendingBuffers.length = 0;
-                                pendingDuration = 0;
-                                started = true;
-                            }
-                        } else {
-                            // Already playing: schedule immediately after current playHead
-                            scheduleBuffer(buffer);
-                        }
-                    } else if (msg.type === "error") {
-                        console.error("Server stream error:", msg.message);
-                    } else if (msg.type === "done") {
-                        // terminal marker, nothing extra
+                        scheduleBuffer(buffer);
                     }
                 }
             }
 
-            {
-                const remainingDecoded = textDecoder.decode();
-                if (remainingDecoded) {
-                    textBuffer += remainingDecoded;
-                }
-                const remaining = textBuffer.trim();
-                if (remaining) {
-                    let msg;
-                    try {
-                        msg = JSON.parse(remaining);
-                    } catch (err) {
-                        msg = null;
-                    }
-                    if (msg && msg.type === "chunk") {
-                        const b64 = msg.chunk;
-
-                        const binary = atob(b64);
-                        const len = binary.length;
-                        const bytes = new Uint8Array(len);
-                        for (let i = 0; i < len; i++) {
-                            bytes[i] = binary.charCodeAt(i);
-                        }
-
-                        const float32 = new Float32Array(bytes.buffer);
-                        const ns = float32.length;
-
-                        const buffer = audioCtx.createBuffer(1, ns, STREAM_SAMPLE_RATE);
-                        buffer.copyToChannel(float32, 0, 0);
-
-                        if (!started) {
-                            pendingBuffers.push(buffer);
-                            pendingDuration += buffer.duration;
-                        } else {
-                            scheduleBuffer(buffer);
-                        }
-                    }
-                }
-            }
-
-
-            // If stream ended before we hit PREBUFFER_SECONDS, just play what we buffered
-            if (!started && pendingBuffers.length > 0) {
-                let startTime = audioCtx.currentTime;
-                for (const buf of pendingBuffers) {
-                    const src = audioCtx.createBufferSource();
-                    src.buffer = buf;
-                    src.connect(audioCtx.destination);
-
-                    const endPromise = new Promise((resolve) => {
-                        src.onended = resolve;
-                    });
-                    sourceEndPromises.push(endPromise);
-
-                    src.start(startTime);
-                    startTime += buf.duration;
-                }
-            }
-
-            // Wait for all scheduled buffers to finish playing
-            if (sourceEndPromises.length > 0) {
-                await Promise.all(sourceEndPromises);
+            // Wait for playback to complete
+            if (sourceEndPromisesRef.current.length > 0) {
+                await Promise.all(sourceEndPromisesRef.current);
+                sourceEndPromisesRef.current = [];
             }
         } finally {
-            try {
-                audioCtx.close();
-            } catch (_) {
-                // ignore
-            }
+            // Don't close audio context as it's reused
         }
     }
 
-
-    // Send one utterance to backend and stream reply
-    const processRecordedAudio = async (blob) => {
-        try {
-            setErrorMessage("");
-            setIsProcessing(true);
-            setIsStreaming(true);
-
-            const dataUrl = await blobToBase64(blob);
-            const base64Payload =
-                typeof dataUrl === "string" ? dataUrl.split(",")[1] || "" : "";
-
-            const resp = await fetch("https://ninad-ai-server.onrender.com/api/voice-chat", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ audio_base64: base64Payload }),
-            });
-
-            if (!resp.ok) {
-                throw new Error(`HTTP ${resp.status}`);
-            }
-
-            await playStreamingJSONLResponse(resp);
-        } catch (e) {
-            console.error(e);
-            setErrorMessage("Failed to process audio");
-        } finally {
-            setIsStreaming(false);
-            setIsProcessing(false);
-        }
-    };
-
-    // Main conversation loop: VAD record -> send -> play -> repeat
+    // Main conversation loop
     const runConversationLoop = async () => {
         if (conversationActiveRef.current) return;
 
@@ -267,7 +287,7 @@ function App() {
                 // 1) Listen with VAD
                 setIsRecording(true);
                 const blob = await recordUtteranceWithVAD({
-                    noInputTimeoutMs: 5000, // 5s of no speech => end conversation
+                    noInputTimeoutMs: 5000,
                     silenceAfterSpeechMs: 800,
                     maxDurationMs: 30000,
                 });
@@ -275,14 +295,18 @@ function App() {
                 setIsRecording(false);
 
                 if (!blob) {
-                    // user stayed silent for 5s -> end
                     break;
                 }
 
                 setRecordingComplete(true);
 
-                // 2) Send to backend and play reply
-                await processRecordedAudio(blob);
+                // 2) Send to backend and play reply (prefer WebSocket)
+                try {
+                    await processRecordedAudioWS(blob);
+                } catch (wsError) {
+                    console.warn("WebSocket failed, falling back to HTTP:", wsError);
+                    await processRecordedAudioHTTP(blob);
+                }
 
                 setRecordingComplete(false);
             } catch (err) {
@@ -297,7 +321,6 @@ function App() {
         setIsRecording(false);
     };
 
-    // Mic click: start convo if idle. If already active, request stop after current turn.
     const handleMicClick = () => {
         if (!conversationActiveRef.current) {
             runConversationLoop();
@@ -306,10 +329,13 @@ function App() {
         }
     };
 
-    // Stop loop on unmount
+    // Cleanup
     useEffect(() => {
         return () => {
             conversationActiveRef.current = false;
+            if (audioContextRef.current) {
+                audioContextRef.current.close();
+            }
         };
     }, []);
 
