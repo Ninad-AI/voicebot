@@ -6,7 +6,7 @@ import Orb from "./components/Orb";
 import { startStreamingMic } from "./utils/audioUtils";
 
 const BACKEND_URL = "handy-backend-lightsail.4s7gsqtx7jmn0.ap-south-1.cs.amazonlightsail.com";
-const WS_URL = "ws://localhost:8000/ws/audio";
+const WS_URL = "wss:///handy-backend-lightsail.4s7gsqtx7jmn0.ap-south-1.cs.amazonlightsail.com/ws/audio";
 
 function App() {
     const [isLoading, setIsLoading] = useState(true);
