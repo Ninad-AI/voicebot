@@ -5,7 +5,7 @@ import MicButton from "./components/MicButton";
 import Orb from "./components/Orb";
 import { startStreamingMic } from "./utils/audioUtils";
 
-const BACKEND_URL = "http://localhost:8000";
+const BACKEND_URL = "handy-backend-lightsail.4s7gsqtx7jmn0.ap-south-1.cs.amazonlightsail.com";
 const WS_URL = "ws://localhost:8000/ws/audio";
 
 function App() {
