@@ -3,9 +3,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import TextFillLoader from "./components/TextFillLoader";
 import MicButton from "./components/MicButton";
 import Orb from "./components/Orb";
-import { blobToBase64, recordUtteranceWithVAD } from "./utils/audioUtils";
+import { startStreamingMic } from "./utils/audioUtils";
 
 const BACKEND_URL = "http://localhost:8000";
+const WS_URL = "ws://localhost:8000/ws/audio";
 
 function App() {
     const [isLoading, setIsLoading] = useState(true);
@@ -33,6 +34,7 @@ function App() {
         }, 8000);
         return () => clearTimeout(maxLoadTimer);
     }, []);
+
 
     const handleLoadingComplete = () => {
         setIsLoading(false);
@@ -81,134 +83,22 @@ function App() {
 
     // Process binary audio chunk
     const processBinaryChunk = (arrayBuffer) => {
-        const pcmData = new Float32Array(arrayBuffer);
-        const sampleRate = 44100; // must match model output
+        // Backend sends PCM16 (Int16), NOT Float32
+        const int16 = new Int16Array(arrayBuffer);
 
+        // Convert Int16 → Float32 for Web Audio API
+        const float32 = new Float32Array(int16.length);
+        for (let i = 0; i < int16.length; i++) {
+            float32[i] = int16[i] / 32768;
+        }
+
+        const sampleRate = 16000; // Must match backend TTS
         const audioCtx = getAudioContext();
-        const buffer = audioCtx.createBuffer(1, pcmData.length, sampleRate);
-        buffer.copyToChannel(pcmData, 0, 0);
+
+        const buffer = audioCtx.createBuffer(1, float32.length, sampleRate);
+        buffer.copyToChannel(float32, 0, 0);
 
         scheduleBuffer(buffer);
-    };
-
-
-
-
-    // WebSocket-based audio processing (new approach)
-    const processRecordedAudioWS = async (blob) => {
-        return new Promise((resolve, reject) => {
-            try {
-                setErrorMessage("");
-                setIsProcessing(true);
-                setIsStreaming(true);
-
-                const ws = new WebSocket(`${BACKEND_URL.replace('http', 'ws')}/ws`);
-                ws.binaryType = "arraybuffer";
-
-                ws.onopen = () => {
-                    console.log("WebSocket connected, sending audio...");
-                    blob.arrayBuffer().then(buffer => {
-                        ws.send(buffer);          // send full audio
-                        ws.send("__END__");       // 🔑 SIGNAL END OF INPUT
-                    });
-                };
-
-                ws.onmessage = async (event) => {
-                    // 1️⃣ Binary audio chunk
-                    if (event.data instanceof ArrayBuffer) {
-                        processBinaryChunk(event.data);
-                        return;
-                    }
-
-                    // 2️⃣ Text control message (string OR Blob)
-                    let text;
-                    if (typeof event.data === "string") {
-                        text = event.data;
-                    } else if (event.data instanceof Blob) {
-                        text = await event.data.text();
-                    } else {
-                        console.warn("Unknown WS message type", event.data);
-                        return;
-                    }
-
-                    try {
-                        const msg = JSON.parse(text);
-
-                        if (msg.type === "done") {
-                            console.log("Stream complete");
-                            ws.close();
-                        } else if (msg.type === "error") {
-                            console.error("Server error:", msg.message);
-                            setErrorMessage(msg.message);
-                            ws.close();
-                        }
-                    } catch (e) {
-                        console.error("Failed to parse WS message:", text, e);
-                    }
-                };
-
-
-
-
-                ws.onerror = (error) => {
-                    console.error("WebSocket error:", error);
-                    setErrorMessage("WebSocket connection failed");
-                    reject(error);
-                };
-
-                ws.onclose = async () => {
-                    console.log("WebSocket closed");
-
-                    // Wait for all audio to finish playing
-                    if (sourceEndPromisesRef.current.length > 0) {
-                        await Promise.all(sourceEndPromisesRef.current);
-                        sourceEndPromisesRef.current = [];
-                    }
-
-                    setIsStreaming(false);
-                    setIsProcessing(false);
-                    resolve();
-                };
-
-            } catch (e) {
-                console.error(e);
-                setErrorMessage("Failed to process audio");
-                setIsStreaming(false);
-                setIsProcessing(false);
-                reject(e);
-            }
-        });
-    };
-
-    // Legacy HTTP-based processing (fallback)
-    const processRecordedAudioHTTP = async (blob) => {
-        try {
-            setErrorMessage("");
-            setIsProcessing(true);
-            setIsStreaming(true);
-
-            const dataUrl = await blobToBase64(blob);
-            const base64Payload =
-                typeof dataUrl === "string" ? dataUrl.split(",")[1] || "" : "";
-
-            const resp = await fetch(`${BACKEND_URL}/api/voice-chat`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ audio_base64: base64Payload }),
-            });
-
-            if (!resp.ok) {
-                throw new Error(`HTTP ${resp.status}`);
-            }
-
-            await playStreamingJSONLResponse(resp);
-        } catch (e) {
-            console.error(e);
-            setErrorMessage("Failed to process audio");
-        } finally {
-            setIsStreaming(false);
-            setIsProcessing(false);
-        }
     };
 
     // Legacy JSONL streaming (for backward compatibility)
@@ -274,58 +164,80 @@ function App() {
         }
     }
 
-    // Main conversation loop
-    const runConversationLoop = async () => {
-        if (conversationActiveRef.current) return;
 
-        conversationActiveRef.current = true;
-        setConversationActive(true);
-        setErrorMessage("");
+    let micController = null;
+    let wsRef = null;
 
-        while (conversationActiveRef.current) {
-            try {
-                // 1) Listen with VAD
-                setIsRecording(true);
-                const blob = await recordUtteranceWithVAD({
-                    noInputTimeoutMs: 5000,
-                    silenceAfterSpeechMs: 800,
-                    maxDurationMs: 30000,
-                });
+    const handleMicClick = async () => {
+        try {
+            if (!conversationActiveRef.current) {
+                console.log("🎤 Starting continuous mic streaming...");
 
+                wsRef = new WebSocket(WS_URL);
+                wsRef.binaryType = "arraybuffer";
+
+                wsRef.onopen = async () => {
+                    console.log("🔗 WS connected, starting PCM stream");
+
+                    micController = await startStreamingMic(wsRef, (level) => {
+                        // Optional: drive orb animation
+                        setIsRecording(level > 0.02);
+                    });
+
+                    conversationActiveRef.current = true;
+                    setConversationActive(true);
+                    setIsStreaming(true);
+                };
+
+                wsRef.onmessage = (event) => {
+                    if (event.data instanceof ArrayBuffer) {
+                        processBinaryChunk(event.data);
+                    } else {
+                        // JSON control messages (tts_start, tts_end, etc.)
+                        try {
+                            const msg = JSON.parse(event.data);
+                            if (msg.type === "tts_start") {
+                                setIsStreaming(true);
+                            }
+                            if (msg.type === "tts_end") {
+                                setIsStreaming(false);
+                            }
+                        } catch {}
+                    }
+                };
+
+                wsRef.onerror = (err) => {
+                    console.error("WebSocket error:", err);
+                    setErrorMessage("WebSocket error");
+                };
+
+                wsRef.onclose = () => {
+                    console.log("WS closed");
+                    setIsStreaming(false);
+                    setConversationActive(false);
+                    conversationActiveRef.current = false;
+                };
+
+            } else {
+                console.log("🛑 Stopping mic streaming...");
+
+                if (micController) {
+                    micController.stop();
+                    micController = null;
+                }
+
+                if (wsRef && wsRef.readyState === WebSocket.OPEN) {
+                    wsRef.close();
+                }
+
+                conversationActiveRef.current = false;
+                setConversationActive(false);
+                setIsStreaming(false);
                 setIsRecording(false);
-
-                if (!blob) {
-                    break;
-                }
-
-                setRecordingComplete(true);
-
-                // 2) Send to backend and play reply (prefer WebSocket)
-                try {
-                    await processRecordedAudioWS(blob);
-                } catch (wsError) {
-                    console.warn("WebSocket failed, falling back to HTTP:", wsError);
-                    await processRecordedAudioHTTP(blob);
-                }
-
-                setRecordingComplete(false);
-            } catch (err) {
-                console.error("Conversation loop error", err);
-                setErrorMessage("Recording or playback failed");
-                break;
             }
-        }
-
-        conversationActiveRef.current = false;
-        setConversationActive(false);
-        setIsRecording(false);
-    };
-
-    const handleMicClick = () => {
-        if (!conversationActiveRef.current) {
-            runConversationLoop();
-        } else {
-            conversationActiveRef.current = false;
+        } catch (e) {
+            console.error("Mic start failed:", e);
+            setErrorMessage("Mic access failed");
         }
     };
 

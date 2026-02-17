@@ -246,3 +246,69 @@ export const recordUtteranceWithVAD = async ({
         tick();
     });
 };
+
+export const startStreamingMic = async (ws, onAudioLevel) => {
+    const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+        },
+    });
+
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    const audioContext = new AudioContextCtor({ sampleRate: 48000 });
+
+    // MUST resume after user gesture
+    if (audioContext.state === "suspended") {
+        await audioContext.resume();
+    }
+
+    const source = audioContext.createMediaStreamSource(stream);
+    const processor = audioContext.createScriptProcessor(1024, 1, 1);
+
+// 🔥 MISSING LINES (CRITICAL)
+    source.connect(processor);
+    processor.connect(audioContext.destination);
+
+    processor.onaudioprocess = (event) => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+
+        const input = event.inputBuffer.getChannelData(0);
+
+        const targetSampleRate = 16000;
+        const ratio = audioContext.sampleRate / targetSampleRate;
+        const newLength = Math.floor(input.length / ratio);
+        const downsampled = new Float32Array(newLength);
+
+        for (let i = 0; i < newLength; i++) {
+            downsampled[i] = input[Math.floor(i * ratio)];
+        }
+
+        // Float32 → PCM16
+        const pcm16 = new Int16Array(downsampled.length);
+        for (let i = 0; i < downsampled.length; i++) {
+            const s = Math.max(-1, Math.min(1, downsampled[i]));
+            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+
+        // 🔥 CRITICAL: 20ms frame chunking (REQUIRED FOR VAD)
+        const FRAME_SIZE = 320; // 20ms @ 16kHz
+
+        for (let i = 0; i < pcm16.length; i += FRAME_SIZE) {
+            const frame = pcm16.slice(i, i + FRAME_SIZE);
+            if (frame.length === FRAME_SIZE) {
+                ws.send(frame.buffer);
+            }
+        }
+    };
+
+    return {
+        stop: () => {
+            processor.disconnect();
+            source.disconnect();
+            stream.getTracks().forEach((t) => t.stop());
+            audioContext.close();
+        },
+    };
+};
