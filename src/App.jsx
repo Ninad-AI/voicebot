@@ -1,349 +1,696 @@
-import { useState, useRef, useEffect } from "react";
+// src/App.jsx
+// ─────────────────────────────────────────────────────────────────────────────
+// Ninad AI — Voice Bot Frontend
+//
+// Flow:
+//   1. Login screen (email + password → POST /auth/login → JWT)
+//   2. Main voice UI (Orb + Mic)  — tap mic to start / stop conversation
+//   3. WebSocket connects to /ws/voice with query params, sends init JSON,
+//      then streams continuous PCM16 16 kHz mono audio.
+//   4. Backend returns binary PCM16 TTS audio + JSON control messages.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { useState, useRef, useEffect, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import TextFillLoader from "./components/TextFillLoader";
 import MicButton from "./components/MicButton";
 import Orb from "./components/Orb";
 import { startStreamingMic } from "./utils/audioUtils";
 
-const BACKEND_URL = "handy-backend-lightsail.4s7gsqtx7jmn0.ap-south-1.cs.amazonlightsail.com";
-const WS_URL = "wss:///handy-backend-lightsail.4s7gsqtx7jmn0.ap-south-1.cs.amazonlightsail.com/ws/audio";
+// ── Backend URLs ─────────────────────────────────────────────────────────────
+const BACKEND_HOST =
+  "handy-backend-lightsail.4s7gsqtx7jmn0.ap-south-1.cs.amazonlightsail.com";
+const API_BASE = `https://${BACKEND_HOST}`;
+const WS_BASE = `wss://${BACKEND_HOST}`;
 
+// ── Defaults for quick testing ───────────────────────────────────────────────
+const DEFAULT_INFLUENCER_ID = "influencer_1";
+const DEFAULT_PREFERRED_PROVIDER = "vapi";
+
+// ── localStorage key ─────────────────────────────────────────────────────────
+const JWT_KEY = "ninad_jwt";
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Login Screen Component
+// ─────────────────────────────────────────────────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    try {
+      const resp = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        throw new Error(body.detail || `Login failed (${resp.status})`);
+      }
+
+      const data = await resp.json();
+      const token = data.access_token || data.token;
+      if (!token) throw new Error("No token in login response");
+
+      localStorage.setItem(JWT_KEY, token);
+      onLogin(token);
+    } catch (err) {
+      console.error("Login error:", err);
+      setError(err.message || "Login failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div
+      className="min-h-screen flex items-center justify-center px-4"
+      style={{
+        background: "linear-gradient(to top, #FF7700 0%, #000000 75%)",
+      }}
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 30 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6, ease: "easeOut" }}
+        style={{
+          background: "rgba(0, 0, 0, 0.55)",
+          backdropFilter: "blur(24px)",
+          WebkitBackdropFilter: "blur(24px)",
+          border: "1px solid rgba(255, 255, 255, 0.08)",
+          borderRadius: "24px",
+          padding: "48px 40px",
+          width: "100%",
+          maxWidth: "420px",
+          boxShadow: "0 32px 64px rgba(0,0,0,0.5)",
+        }}
+      >
+        <h1
+          style={{
+            fontSize: "2rem",
+            fontWeight: 700,
+            color: "#fff",
+            textAlign: "center",
+            marginBottom: "8px",
+          }}
+        >
+          Ninad <span style={{ color: "#FF7700" }}>AI</span>
+        </h1>
+        <p
+          style={{
+            color: "rgba(255,255,255,0.5)",
+            textAlign: "center",
+            fontSize: "0.875rem",
+            marginBottom: "32px",
+          }}
+        >
+          Sign in to start your voice conversation
+        </p>
+
+        <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: "16px" }}>
+            <label
+              htmlFor="login-email"
+              style={{
+                display: "block",
+                color: "rgba(255,255,255,0.6)",
+                fontSize: "0.75rem",
+                fontWeight: 500,
+                marginBottom: "6px",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+              }}
+            >
+              Email
+            </label>
+            <input
+              id="login-email"
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              style={{
+                width: "100%",
+                padding: "12px 16px",
+                borderRadius: "12px",
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: "rgba(255,255,255,0.06)",
+                color: "#fff",
+                fontSize: "0.95rem",
+                outline: "none",
+                transition: "border-color 0.2s",
+              }}
+              onFocus={(e) =>
+                (e.target.style.borderColor = "rgba(255,119,0,0.6)")
+              }
+              onBlur={(e) =>
+                (e.target.style.borderColor = "rgba(255,255,255,0.12)")
+              }
+            />
+          </div>
+
+          <div style={{ marginBottom: "24px" }}>
+            <label
+              htmlFor="login-password"
+              style={{
+                display: "block",
+                color: "rgba(255,255,255,0.6)",
+                fontSize: "0.75rem",
+                fontWeight: 500,
+                marginBottom: "6px",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+              }}
+            >
+              Password
+            </label>
+            <input
+              id="login-password"
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              style={{
+                width: "100%",
+                padding: "12px 16px",
+                borderRadius: "12px",
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: "rgba(255,255,255,0.06)",
+                color: "#fff",
+                fontSize: "0.95rem",
+                outline: "none",
+                transition: "border-color 0.2s",
+              }}
+              onFocus={(e) =>
+                (e.target.style.borderColor = "rgba(255,119,0,0.6)")
+              }
+              onBlur={(e) =>
+                (e.target.style.borderColor = "rgba(255,255,255,0.12)")
+              }
+            />
+          </div>
+
+          {error && (
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              style={{
+                color: "#ff4444",
+                fontSize: "0.85rem",
+                textAlign: "center",
+                marginBottom: "16px",
+              }}
+            >
+              {error}
+            </motion.p>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            style={{
+              width: "100%",
+              padding: "14px",
+              borderRadius: "14px",
+              border: "none",
+              background: loading
+                ? "rgba(255,119,0,0.4)"
+                : "linear-gradient(135deg, #FF7700, #E99200)",
+              color: "#fff",
+              fontSize: "1rem",
+              fontWeight: 600,
+              cursor: loading ? "not-allowed" : "pointer",
+              transition: "all 0.2s",
+              letterSpacing: "0.02em",
+            }}
+          >
+            {loading ? "Signing in…" : "Sign In"}
+          </button>
+        </form>
+      </motion.div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Main App Component
+// ─────────────────────────────────────────────────────────────────────────────
 function App() {
-    const [isLoading, setIsLoading] = useState(true);
+  // ── Auth state ──
+  const [jwt, setJwt] = useState(() => localStorage.getItem(JWT_KEY) || null);
 
-    // Conversation state
-    const [conversationActive, setConversationActive] = useState(false);
-    const conversationActiveRef = useRef(false);
+  // ── Loading animation ──
+  const [isLoading, setIsLoading] = useState(true);
 
-    // Turn-level state
-    const [isRecording, setIsRecording] = useState(false);
-    const [recordingComplete, setRecordingComplete] = useState(false);
-    const [isStreaming, setIsStreaming] = useState(false);
-    const [isProcessing, setIsProcessing] = useState(false);
-    const [errorMessage, setErrorMessage] = useState("");
+  // ── Conversation state ──
+  const [conversationActive, setConversationActive] = useState(false);
+  const conversationActiveRef = useRef(false);
 
-    // Audio playback
-    const audioContextRef = useRef(null);
-    const playHeadRef = useRef(0);
-    const sourceEndPromisesRef = useRef([]);
+  // ── UI indicators ──
+  const [isListening, setIsListening] = useState(false);
+  const [isResponding, setIsResponding] = useState(false);
+  const [statusText, setStatusText] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
 
-    // Loading animation
-    useEffect(() => {
-        const maxLoadTimer = setTimeout(() => {
-            setIsLoading(false);
-        }, 8000);
-        return () => clearTimeout(maxLoadTimer);
-    }, []);
+  // ── Audio playback refs ──
+  const audioContextRef = useRef(null);
+  const playHeadRef = useRef(0);
+  const sourceEndPromisesRef = useRef([]);
 
+  // ── WebSocket & mic refs ──
+  const wsRef = useRef(null);
+  const micControllerRef = useRef(null);
 
-    const handleLoadingComplete = () => {
-        setIsLoading(false);
-    };
+  // ── Loading screen timer ──
+  useEffect(() => {
+    const timer = setTimeout(() => setIsLoading(false), 8000);
+    return () => clearTimeout(timer);
+  }, []);
 
-    // Auto-reset recordingComplete visual flag
-    useEffect(() => {
-        if (recordingComplete) {
-            const timer = setTimeout(() => {
-                setRecordingComplete(false);
-            }, 2500);
-            return () => clearTimeout(timer);
-        }
-    }, [recordingComplete]);
+  const handleLoadingComplete = () => setIsLoading(false);
 
-    // Initialize audio context
-    const getAudioContext = () => {
-        if (!audioContextRef.current) {
-            const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-            audioContextRef.current = new AudioContextCtor();
-            playHeadRef.current = audioContextRef.current.currentTime;
-            sourceEndPromisesRef.current = [];
-        }
-        return audioContextRef.current;
-    };
+  // ── Clear error after 6s ──
+  useEffect(() => {
+    if (!errorMessage) return;
+    const t = setTimeout(() => setErrorMessage(""), 6000);
+    return () => clearTimeout(t);
+  }, [errorMessage]);
 
-    // Schedule audio buffer for playback
-    const scheduleBuffer = (buffer) => {
-        const audioCtx = getAudioContext();
-        const src = audioCtx.createBufferSource();
-        src.buffer = buffer;
-        src.connect(audioCtx.destination);
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Audio Playback (PCM16 from backend)
+  // ─────────────────────────────────────────────────────────────────────────
 
-        const endPromise = new Promise((resolve) => {
-            src.onended = resolve;
-        });
-        sourceEndPromisesRef.current.push(endPromise);
+  /** Lazily create / resume the playback AudioContext. */
+  const getAudioContext = useCallback(() => {
+    if (!audioContextRef.current || audioContextRef.current.state === "closed") {
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      audioContextRef.current = new Ctor();
+      playHeadRef.current = audioContextRef.current.currentTime;
+      sourceEndPromisesRef.current = [];
+    }
+    return audioContextRef.current;
+  }, []);
 
-        if (playHeadRef.current < audioCtx.currentTime) {
-            playHeadRef.current = audioCtx.currentTime;
-        }
+  /** Schedule an AudioBuffer for gapless playback. */
+  const scheduleBuffer = useCallback(
+    (buffer) => {
+      const ctx = getAudioContext();
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      src.connect(ctx.destination);
 
-        src.start(playHeadRef.current);
-        playHeadRef.current += buffer.duration;
-    };
+      const endPromise = new Promise((resolve) => {
+        src.onended = resolve;
+      });
+      sourceEndPromisesRef.current.push(endPromise);
 
-    // Process binary audio chunk
-    const processBinaryChunk = (arrayBuffer) => {
-        // Backend sends PCM16 (Int16), NOT Float32
-        const int16 = new Int16Array(arrayBuffer);
+      if (playHeadRef.current < ctx.currentTime) {
+        playHeadRef.current = ctx.currentTime;
+      }
+      src.start(playHeadRef.current);
+      playHeadRef.current += buffer.duration;
+    },
+    [getAudioContext]
+  );
 
-        // Convert Int16 → Float32 for Web Audio API
-        const float32 = new Float32Array(int16.length);
-        for (let i = 0; i < int16.length; i++) {
-            float32[i] = int16[i] / 32768;
-        }
+  /**
+   * Process a binary PCM16 chunk from the backend.
+   * Converts Int16 → Float32, creates an AudioBuffer @ 16 kHz, schedules it.
+   */
+  const processBinaryChunk = useCallback(
+    (arrayBuffer) => {
+      const int16 = new Int16Array(arrayBuffer);
 
-        const sampleRate = 16000; // Must match backend TTS
-        const audioCtx = getAudioContext();
+      // Convert Int16 → Float32 for Web Audio API
+      const float32 = new Float32Array(int16.length);
+      for (let i = 0; i < int16.length; i++) {
+        float32[i] = int16[i] / 32768;
+      }
 
-        const buffer = audioCtx.createBuffer(1, float32.length, sampleRate);
-        buffer.copyToChannel(float32, 0, 0);
+      const sampleRate = 16000; // must match backend TTS output
+      const ctx = getAudioContext();
+      const buffer = ctx.createBuffer(1, float32.length, sampleRate);
+      buffer.copyToChannel(float32, 0, 0);
 
-        scheduleBuffer(buffer);
-    };
+      scheduleBuffer(buffer);
+    },
+    [getAudioContext, scheduleBuffer]
+  );
 
-    // Legacy JSONL streaming (for backward compatibility)
-    async function playStreamingJSONLResponse(resp) {
-        if (!resp.body) {
-            throw new Error("Streaming not supported by this browser");
-        }
+  // ─────────────────────────────────────────────────────────────────────────
+  //  WebSocket + Mic Lifecycle
+  // ─────────────────────────────────────────────────────────────────────────
 
-        const reader = resp.body.getReader();
-        const textDecoder = new TextDecoder();
-        const audioCtx = getAudioContext();
+  /** Full cleanup — mic + WebSocket + state. */
+  const cleanup = useCallback(() => {
+    // Stop mic
+    if (micControllerRef.current) {
+      micControllerRef.current.stop();
+      micControllerRef.current = null;
+    }
+    // Close WebSocket
+    if (wsRef.current) {
+      if (wsRef.current.readyState === WebSocket.OPEN ||
+          wsRef.current.readyState === WebSocket.CONNECTING) {
+        wsRef.current.close();
+      }
+      wsRef.current = null;
+    }
+    // Reset state
+    conversationActiveRef.current = false;
+    setConversationActive(false);
+    setIsListening(false);
+    setIsResponding(false);
+    setStatusText("");
+  }, []);
 
-        let textBuffer = "";
-
-        try {
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
-
-                textBuffer += textDecoder.decode(value, { stream: true });
-
-                while (true) {
-                    const newlineIndex = textBuffer.indexOf("\n");
-                    if (newlineIndex === -1) break;
-
-                    const line = textBuffer.slice(0, newlineIndex).trim();
-                    textBuffer = textBuffer.slice(newlineIndex + 1);
-
-                    if (!line) continue;
-
-                    let msg;
-                    try {
-                        msg = JSON.parse(line);
-                    } catch (err) {
-                        console.error("Bad JSON from stream:", line);
-                        continue;
-                    }
-
-                    if (msg.type === "chunk") {
-                        const b64 = msg.chunk;
-                        const binary = atob(b64);
-                        const len = binary.length;
-                        const bytes = new Uint8Array(len);
-                        for (let i = 0; i < len; i++) {
-                            bytes[i] = binary.charCodeAt(i);
-                        }
-
-                        const float32 = new Float32Array(bytes.buffer);
-                        const buffer = audioCtx.createBuffer(1, float32.length, msg.sample_rate);
-                        buffer.copyToChannel(float32, 0, 0);
-                        scheduleBuffer(buffer);
-                    }
-                }
-            }
-
-            // Wait for playback to complete
-            if (sourceEndPromisesRef.current.length > 0) {
-                await Promise.all(sourceEndPromisesRef.current);
-                sourceEndPromisesRef.current = [];
-            }
-        } finally {
-            // Don't close audio context as it's reused
-        }
+  /** Handle mic button tap — toggles conversation on/off. */
+  const handleMicClick = useCallback(async () => {
+    // ── STOP ──
+    if (conversationActiveRef.current) {
+      console.log("🛑 Stopping conversation…");
+      cleanup();
+      return;
     }
 
+    // ── START ──
+    try {
+      setErrorMessage("");
+      setStatusText("Connecting…");
 
-    let micController = null;
-    let wsRef = null;
+      // Build WebSocket URL with query params
+      const params = new URLSearchParams({
+        influencer_id: DEFAULT_INFLUENCER_ID,
+        preferred_provider: DEFAULT_PREFERRED_PROVIDER,
+      });
+      const wsUrl = `${WS_BASE}/ws/voice?${params.toString()}`;
 
-    const handleMicClick = async () => {
-        try {
-            if (!conversationActiveRef.current) {
-                console.log("🎤 Starting continuous mic streaming...");
+      console.log("🔗 Connecting to", wsUrl);
+      const ws = new WebSocket(wsUrl);
+      ws.binaryType = "arraybuffer";
+      wsRef.current = ws;
 
-                wsRef = new WebSocket(WS_URL);
-                wsRef.binaryType = "arraybuffer";
+      ws.onopen = async () => {
+        console.log("✅ WebSocket connected — sending init message");
 
-                wsRef.onopen = async () => {
-                    console.log("🔗 WS connected, starting PCM stream");
-
-                    micController = await startStreamingMic(wsRef, (level) => {
-                        // Optional: drive orb animation
-                        setIsRecording(level > 0.02);
-                    });
-
-                    conversationActiveRef.current = true;
-                    setConversationActive(true);
-                    setIsStreaming(true);
-                };
-
-                wsRef.onmessage = (event) => {
-                    if (event.data instanceof ArrayBuffer) {
-                        processBinaryChunk(event.data);
-                    } else {
-                        // JSON control messages (tts_start, tts_end, etc.)
-                        try {
-                            const msg = JSON.parse(event.data);
-                            if (msg.type === "tts_start") {
-                                setIsStreaming(true);
-                            }
-                            if (msg.type === "tts_end") {
-                                setIsStreaming(false);
-                            }
-                        } catch {}
-                    }
-                };
-
-                wsRef.onerror = (err) => {
-                    console.error("WebSocket error:", err);
-                    setErrorMessage("WebSocket error");
-                };
-
-                wsRef.onclose = () => {
-                    console.log("WS closed");
-                    setIsStreaming(false);
-                    setConversationActive(false);
-                    conversationActiveRef.current = false;
-                };
-
-            } else {
-                console.log("🛑 Stopping mic streaming...");
-
-                if (micController) {
-                    micController.stop();
-                    micController = null;
-                }
-
-                if (wsRef && wsRef.readyState === WebSocket.OPEN) {
-                    wsRef.close();
-                }
-
-                conversationActiveRef.current = false;
-                setConversationActive(false);
-                setIsStreaming(false);
-                setIsRecording(false);
-            }
-        } catch (e) {
-            console.error("Mic start failed:", e);
-            setErrorMessage("Mic access failed");
-        }
-    };
-
-    // Cleanup
-    useEffect(() => {
-        return () => {
-            conversationActiveRef.current = false;
-            if (audioContextRef.current) {
-                audioContextRef.current.close();
-            }
+        // ── Send the required init JSON message ──
+        const initPayload = {
+          token: jwt,
+          influencer_id: DEFAULT_INFLUENCER_ID,
+          preferred_provider: DEFAULT_PREFERRED_PROVIDER,
         };
-    }, []);
+        ws.send(JSON.stringify(initPayload));
 
-    return (
-        <>
-            <AnimatePresence mode="wait">
-                {isLoading ? (
-                    <motion.div
-                        key="loading"
-                        initial={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        transition={{ duration: 1.5, ease: "easeInOut" }}
+        // ── Resume playback AudioContext (user gesture requirement) ──
+        const ctx = getAudioContext();
+        if (ctx.state === "suspended") await ctx.resume();
+
+        // ── Start mic streaming ──
+        try {
+          const controller = await startStreamingMic(ws, (level) => {
+            setIsListening(level > 0.015);
+          });
+          micControllerRef.current = controller;
+
+          conversationActiveRef.current = true;
+          setConversationActive(true);
+          setStatusText("");
+          console.log("🎤 Streaming started");
+        } catch (micErr) {
+          console.error("Mic access failed:", micErr);
+          setErrorMessage("Microphone access denied. Please allow mic permissions.");
+          cleanup();
+        }
+      };
+
+      ws.onmessage = (event) => {
+        if (event.data instanceof ArrayBuffer) {
+          // ── Binary TTS audio ──
+          processBinaryChunk(event.data);
+        } else {
+          // ── JSON control messages ──
+          try {
+            const msg = JSON.parse(event.data);
+            console.log("📩 Control message:", msg);
+
+            switch (msg.type) {
+              case "tts_start":
+                setIsResponding(true);
+                setIsListening(false);
+                break;
+              case "tts_end":
+                setIsResponding(false);
+                break;
+              case "error":
+                setErrorMessage(msg.message || "Server error");
+                break;
+              case "auth_failed":
+                setErrorMessage("Authentication failed — please log in again.");
+                handleLogout();
+                break;
+              case "session_end":
+                setStatusText("Session ended");
+                cleanup();
+                break;
+              default:
+                // Log unknown control messages
+                break;
+            }
+          } catch {
+            // Not valid JSON — ignore
+          }
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error("❌ WebSocket error:", err);
+        setErrorMessage("Connection error. Please try again.");
+      };
+
+      ws.onclose = (event) => {
+        console.log(`🔌 WebSocket closed (code=${event.code})`);
+        // Only show error if it was unexpected
+        if (conversationActiveRef.current && event.code !== 1000) {
+          setErrorMessage("Connection lost. Tap mic to reconnect.");
+        }
+        cleanup();
+      };
+    } catch (err) {
+      console.error("Failed to start conversation:", err);
+      setErrorMessage(err.message || "Failed to connect");
+      cleanup();
+    }
+  }, [jwt, cleanup, getAudioContext, processBinaryChunk]);
+
+  // ── Cleanup on component unmount ──
+  useEffect(() => {
+    return () => {
+      cleanup();
+      if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+        audioContextRef.current.close().catch(() => {});
+      }
+    };
+  }, [cleanup]);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Auth Handlers
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const handleLogin = (token) => {
+    setJwt(token);
+  };
+
+  const handleLogout = () => {
+    cleanup();
+    localStorage.removeItem(JWT_KEY);
+    setJwt(null);
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Render — Login Gate
+  // ─────────────────────────────────────────────────────────────────────────
+  if (!jwt) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Render — Main Voice UI
+  // ─────────────────────────────────────────────────────────────────────────
+  return (
+    <>
+      <AnimatePresence mode="wait">
+        {isLoading ? (
+          <motion.div
+            key="loading"
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 1.5, ease: "easeInOut" }}
+          >
+            <TextFillLoader onComplete={handleLoadingComplete} />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="main"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 1.5, ease: "easeInOut" }}
+          >
+            <div
+              className="min-h-screen relative overflow-hidden"
+              style={{
+                background: "linear-gradient(to top, #FF7700 0%, #000000 75%)",
+              }}
+            >
+              {/* Overlay */}
+              <div className="absolute inset-0 bg-gradient-to-t from-transparent via-transparent to-black/10 pointer-events-none"></div>
+
+              {/* Header */}
+              <header className="absolute top-0 left-0 right-0 p-6 z-10">
+                <div className="flex justify-between items-center">
+                  <h1 className="text-3xl md:text-4xl font-bold text-white tracking-tight drop-shadow-2xl">
+                    Ninad <span className="text-ninad-start-hover">AI</span>
+                  </h1>
+
+                  {/* Logout button */}
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={handleLogout}
+                    style={{
+                      background: "rgba(255, 255, 255, 0.08)",
+                      backdropFilter: "blur(12px)",
+                      WebkitBackdropFilter: "blur(12px)",
+                      border: "1px solid rgba(255, 255, 255, 0.12)",
+                      borderRadius: "12px",
+                      padding: "8px 20px",
+                      color: "rgba(255, 255, 255, 0.8)",
+                      fontSize: "0.8rem",
+                      fontWeight: 500,
+                      cursor: "pointer",
+                      letterSpacing: "0.03em",
+                      transition: "all 0.2s",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.target.style.background = "rgba(255,68,68,0.2)";
+                      e.target.style.borderColor = "rgba(255,68,68,0.3)";
+                      e.target.style.color = "#ff6666";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.background = "rgba(255,255,255,0.08)";
+                      e.target.style.borderColor = "rgba(255,255,255,0.12)";
+                      e.target.style.color = "rgba(255,255,255,0.8)";
+                    }}
+                  >
+                    Logout
+                  </motion.button>
+                </div>
+              </header>
+
+              {/* Main Content */}
+              <main className="flex flex-col items-center justify-center min-h-screen px-4">
+                {/* Orb */}
+                <div className="mb-20 w-[400px] h-[400px] relative">
+                  <Orb
+                    hoverIntensity={0.4}
+                    rotateOnHover={true}
+                    hue={15}
+                    forceHoverState={isListening || isResponding}
+                  />
+                </div>
+
+                {/* Mic Button */}
+                <div className="flex gap-6 items-center justify-center">
+                  <MicButton
+                    conversationActive={conversationActive}
+                    isRecording={isListening}
+                    onClick={handleMicClick}
+                  />
+                </div>
+
+                {/* Status Indicators */}
+                <div className="mt-8 text-center" style={{ minHeight: "24px" }}>
+                  {statusText && (
+                    <motion.p
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="text-white text-sm font-medium animate-pulse drop-shadow-lg"
                     >
-                        <TextFillLoader onComplete={handleLoadingComplete} />
-                    </motion.div>
-                ) : (
-                    <motion.div
-                        key="main"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ duration: 1.5, ease: "easeInOut" }}
+                      {statusText}
+                    </motion.p>
+                  )}
+
+                  {conversationActive && isListening && !isResponding && (
+                    <motion.p
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="text-white text-sm font-medium animate-pulse drop-shadow-lg"
                     >
-                        <div
-                            className="min-h-screen relative overflow-hidden"
-                            style={{
-                                background: "linear-gradient(to top, #FF7700 0%, #000000 75%)",
-                            }}
-                        >
-                            <div className="absolute inset-0 bg-gradient-to-t from-transparent via-transparent to-black/10 pointer-events-none"></div>
+                      🎤 Listening…
+                    </motion.p>
+                  )}
 
-                            <header className="absolute top-0 left-0 right-0 p-6 z-10">
-                                <div className="flex justify-center md:justify-start">
-                                    <h1 className="text-3xl md:text-4xl font-bold text-white tracking-tight drop-shadow-2xl">
-                                        Ninad <span className="text-ninad-start-hover">AI</span>
-                                    </h1>
-                                </div>
-                            </header>
+                  {isResponding && (
+                    <motion.p
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="text-white text-sm font-medium animate-pulse drop-shadow-lg"
+                    >
+                      🔊 Responding…
+                    </motion.p>
+                  )}
 
-                            <main className="flex flex-col items-center justify-center min-h-screen px-4">
-                                <div className="mb-20 w-[400px] h-[400px] relative">
-                                    <Orb
-                                        hoverIntensity={0.4}
-                                        rotateOnHover={true}
-                                        hue={15}
-                                        forceHoverState={isRecording || isStreaming}
-                                    />
-                                </div>
+                  {conversationActive && !isListening && !isResponding && !statusText && (
+                    <motion.p
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="text-white text-sm font-medium drop-shadow-lg"
+                      style={{ opacity: 0.6 }}
+                    >
+                      Connected — start speaking
+                    </motion.p>
+                  )}
 
-                                <div className="flex gap-6 items-center justify-center">
-                                    <MicButton
-                                        conversationActive={conversationActive}
-                                        isRecording={isRecording}
-                                        onClick={handleMicClick}
-                                    />
-                                </div>
+                  {!!errorMessage && (
+                    <motion.p
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="text-sm font-medium drop-shadow-lg"
+                      style={{ color: "#ff6666" }}
+                    >
+                      ⚠️ {errorMessage}
+                    </motion.p>
+                  )}
 
-                                <div className="mt-8 text-center">
-                                    {conversationActive && isRecording && (
-                                        <p className="text-white text-sm font-medium animate-pulse drop-shadow-lg">
-                                            Listening...
-                                        </p>
-                                    )}
-                                    {isStreaming && (
-                                        <p className="text-white text-sm font-medium animate-pulse drop-shadow-lg">
-                                            Responding...
-                                        </p>
-                                    )}
-                                    {isProcessing && !isStreaming && (
-                                        <p className="text-white text-sm font-medium animate-pulse drop-shadow-lg">
-                                            Processing...
-                                        </p>
-                                    )}
-                                    {!!errorMessage && (
-                                        <p className="text-white text-sm font-medium drop-shadow-lg">
-                                            {errorMessage}
-                                        </p>
-                                    )}
-                                    {!conversationActive && !isProcessing && !isStreaming && (
-                                        <p className="text-white text-sm font-medium drop-shadow-lg">
-                                            Tap the mic to start a conversation.
-                                        </p>
-                                    )}
-                                </div>
-                            </main>
+                  {!conversationActive && !statusText && !errorMessage && (
+                    <p className="text-white text-sm font-medium drop-shadow-lg">
+                      Tap the mic to start a conversation.
+                    </p>
+                  )}
+                </div>
+              </main>
 
-                            <footer className="absolute bottom-0 left-0 right-0 p-4 text-center z-10">
-                                <p className="text-white text-xs opacity-80 drop-shadow-lg">
-                                    © 2025 Ninad AI. Voice-powered conversations.
-                                </p>
-                            </footer>
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
-        </>
-    );
+              {/* Footer */}
+              <footer className="absolute bottom-0 left-0 right-0 p-4 text-center z-10">
+                <p className="text-white text-xs opacity-80 drop-shadow-lg">
+                  © 2026 Ninad AI. Voice-powered conversations.
+                </p>
+              </footer>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  );
 }
 
 export default App;

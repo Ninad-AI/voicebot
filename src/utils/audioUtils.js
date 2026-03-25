@@ -1,314 +1,141 @@
-/**
- * Audio utility functions for recording and processing
- */
-
-let mediaRecorder = null;
-let audioChunks = [];
-
-/**
- * Start recording audio from the user's microphone
- * @returns {Promise<{mediaRecorder: MediaRecorder, audioContext: AudioContext, analyser: AnalyserNode}>}
- */
-export const startRecording = async () => {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ 
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      } 
-    });
-
-    // Create audio context for visualization
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const source = audioContext.createMediaStreamSource(stream);
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 256;
-    source.connect(analyser);
-
-    // Setup media recorder
-    mediaRecorder = new MediaRecorder(stream);
-    audioChunks = [];
-
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        audioChunks.push(event.data);
-      }
-    };
-
-    mediaRecorder.start();
-
-    return { mediaRecorder, audioContext, analyser };
-  } catch (error) {
-    console.error('Error accessing microphone:', error);
-    throw error;
-  }
-};
+// src/utils/audioUtils.js
+// ─────────────────────────────────────────────────────────────────────────────
+// Audio utilities for real-time PCM16 WebSocket streaming.
+//
+// Exports:
+//   • startStreamingMic(ws, onAudioLevel) → { stop() }
+//       Opens the mic, downsamples to 16 kHz mono PCM16,
+//       and sends 20 ms frames (320 samples) over the given WebSocket.
+//
+//   • getAudioLevel(analyser) → number (0-1)
+//       Simple frequency-domain RMS for visualisation.
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Stop recording and return the audio blob
- * @param {MediaRecorder} recorder - The media recorder instance
- * @param {AudioContext} audioContext - The audio context to close
- * @returns {Promise<Blob>}
- */
-export const stopRecording = (recorder, audioContext) => {
-  return new Promise((resolve) => {
-    if (!recorder) {
-      resolve(null);
-      return;
-    }
-
-    recorder.onstop = () => {
-      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-      audioChunks = [];
-      
-      // Stop all tracks
-      recorder.stream.getTracks().forEach(track => track.stop());
-      
-      // Close audio context
-      if (audioContext && audioContext.state !== 'closed') {
-        audioContext.close();
-      }
-      
-      resolve(audioBlob);
-    };
-
-    recorder.stop();
-  });
-};
-
-/**
- * Convert audio blob to base64 string
- * @param {Blob} blob - The audio blob
- * @returns {Promise<string>}
- */
-export const blobToBase64 = (blob) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-};
-
-/**
- * Analyze audio level from analyser node
- * @param {AnalyserNode} analyser - The audio analyser
- * @returns {number} Normalized audio level (0-1)
+ * Analyze audio level from an AnalyserNode (useful for Orb animation).
+ * @param {AnalyserNode} analyser
+ * @returns {number} Normalised audio level 0‒1
  */
 export const getAudioLevel = (analyser) => {
   if (!analyser) return 0;
-  
   const dataArray = new Uint8Array(analyser.frequencyBinCount);
   analyser.getByteFrequencyData(dataArray);
-  
-  const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+  const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
   return Math.min(average / 128, 1);
 };
 
-
 /**
- * Record a single utterance using simple energy-based VAD.
+ * Start continuous microphone streaming over a WebSocket.
  *
- * Behaviour:
- *  - Starts listening immediately
- *  - If user speaks: record until trailing silence, then return Blob
- *  - If user never speaks for noInputTimeoutMs: return null
+ * Audio pipeline:
+ *   mic (browser native rate, e.g. 48 kHz)
+ *     → ScriptProcessorNode (buffer 4096)
+ *       → downsample to 16 kHz
+ *         → Float32 → Int16 (PCM16)
+ *           → slice into 20 ms frames (320 samples = 640 bytes)
+ *             → ws.send(frame.buffer)
+ *
+ * A leftover buffer is kept between `onaudioprocess` callbacks so that
+ * partial frames are never lost.
+ *
+ * @param {WebSocket} ws          – An *already open* WebSocket in binary mode.
+ * @param {Function}  onAudioLevel – Optional callback(level: 0‒1) per frame.
+ * @returns {Promise<{stop: Function}>}
  */
-export const recordUtteranceWithVAD = async ({
-                                                 maxDurationMs = 30000,
-                                                 energyThreshold = 0.01,
-                                                 silenceAfterSpeechMs = 600,
-                                                 noInputTimeoutMs = 5000,
-                                                 onAudioLevel,
-                                             } = {}) => {
-    const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-        },
-    });
-
-    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-    const audioContext = new AudioContextCtor();
-    const source = audioContext.createMediaStreamSource(stream);
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 1024;
-    source.connect(analyser);
-
-    const recorder = new MediaRecorder(stream);
-    const chunks = [];
-    recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-            chunks.push(event.data);
-        }
-    };
-    // small timeslice so we flush data regularly
-    recorder.start(100);
-
-    const dataArray = new Uint8Array(analyser.fftSize);
-    const startTime = performance.now();
-
-    let speechStarted = false;
-    let lastSpeechTime = null;
-
-    let noiseSum = 0;
-    let noiseCount = 0;
-
-    return new Promise((resolve, reject) => {
-        const cleanup = () => {
-            try {
-                stream.getTracks().forEach((t) => t.stop());
-            } catch (_) {}
-            if (audioContext && audioContext.state !== "closed") {
-                audioContext.close();
-            }
-        };
-
-        const finishWithBlob = () => {
-            recorder.onstop = () => {
-                const blob = new Blob(chunks, { type: "audio/webm" });
-                cleanup();
-                resolve(blob);
-            };
-            try {
-                recorder.stop();
-            } catch (err) {
-                cleanup();
-                reject(err);
-            }
-        };
-
-        const finishNoSpeech = () => {
-            cleanup();
-            resolve(null);
-        };
-
-        const tick = () => {
-            const now = performance.now();
-            const elapsed = now - startTime;
-
-            analyser.getByteTimeDomainData(dataArray);
-            let sumSquares = 0;
-            for (let i = 0; i < dataArray.length; i++) {
-                const v = (dataArray[i] - 128) / 128; // -1..1
-                sumSquares += v * v;
-            }
-            const rms = Math.sqrt(sumSquares / dataArray.length); // 0..~1
-
-            if (typeof onAudioLevel === "function") {
-                const normalized = Math.min(rms * 8, 1); // boost into 0..1
-                onAudioLevel(normalized);
-            }
-
-            // Dynamic threshold from first 0.5s of noise
-            if (!speechStarted && elapsed < 500) {
-                noiseSum += rms;
-                noiseCount += 1;
-            }
-
-            let threshold = energyThreshold;
-            if (!speechStarted && noiseCount > 0) {
-                const estNoise = noiseSum / noiseCount;
-                threshold = Math.max(threshold, estNoise * 3.0);
-            }
-
-            if (rms >= threshold) {
-                speechStarted = true;
-                lastSpeechTime = now;
-            }
-
-            // Global "no speech at all" timeout
-            if (!speechStarted && elapsed >= noInputTimeoutMs) {
-                finishNoSpeech();
-                return;
-            }
-
-            if (speechStarted) {
-                if (rms >= threshold) {
-                    lastSpeechTime = now;
-                }
-
-                const silenceElapsed = now - lastSpeechTime;
-                if (
-                    silenceElapsed >= silenceAfterSpeechMs ||
-                    elapsed >= maxDurationMs
-                ) {
-                    finishWithBlob();
-                    return;
-                }
-            }
-
-            requestAnimationFrame(tick);
-        };
-
-        tick();
-    });
-};
-
 export const startStreamingMic = async (ws, onAudioLevel) => {
-    const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-        },
-    });
+  // ── 1. Acquire microphone stream ──────────────────────────────────────
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      sampleRate: 16000, // hint — browsers may ignore this
+    },
+  });
 
-    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-    const audioContext = new AudioContextCtor({ sampleRate: 48000 });
+  // ── 2. Create AudioContext (ideally at native rate for best quality) ──
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+  const audioContext = new AudioContextCtor();
 
-    // MUST resume after user gesture
-    if (audioContext.state === "suspended") {
-        await audioContext.resume();
+  // Resume if suspended (required after user gesture in some browsers)
+  if (audioContext.state === "suspended") {
+    await audioContext.resume();
+  }
+
+  const nativeRate = audioContext.sampleRate;
+  const TARGET_RATE = 16000;
+  const FRAME_SAMPLES = 320; // 20 ms @ 16 kHz
+
+  console.log(
+    `🎤 Mic opened — native ${nativeRate} Hz → resampling to ${TARGET_RATE} Hz`
+  );
+
+  // ── 3. Connect source → processor ────────────────────────────────────
+  const source = audioContext.createMediaStreamSource(stream);
+
+  // Use a 4096-sample buffer for smoother processing on all browsers
+  const processor = audioContext.createScriptProcessor(4096, 1, 1);
+  source.connect(processor);
+  processor.connect(audioContext.destination); // required for onaudioprocess to fire
+
+  // ── 4. Leftover buffer for frame alignment ───────────────────────────
+  let leftover = new Int16Array(0);
+
+  processor.onaudioprocess = (event) => {
+    if (ws.readyState !== WebSocket.OPEN) return;
+
+    const input = event.inputBuffer.getChannelData(0); // Float32Array
+
+    // ── Compute audio level for visualisation ──
+    if (typeof onAudioLevel === "function") {
+      let sumSq = 0;
+      for (let i = 0; i < input.length; i++) sumSq += input[i] * input[i];
+      const rms = Math.sqrt(sumSq / input.length);
+      onAudioLevel(Math.min(rms * 6, 1)); // normalise to 0-1
     }
 
-    const source = audioContext.createMediaStreamSource(stream);
-    const processor = audioContext.createScriptProcessor(1024, 1, 1);
+    // ── Downsample to 16 kHz ──
+    const ratio = nativeRate / TARGET_RATE;
+    const newLength = Math.floor(input.length / ratio);
+    const downsampled = new Float32Array(newLength);
+    for (let i = 0; i < newLength; i++) {
+      downsampled[i] = input[Math.floor(i * ratio)];
+    }
 
-// 🔥 MISSING LINES (CRITICAL)
-    source.connect(processor);
-    processor.connect(audioContext.destination);
+    // ── Float32 → PCM16 ──
+    const pcm16 = new Int16Array(downsampled.length);
+    for (let i = 0; i < downsampled.length; i++) {
+      const s = Math.max(-1, Math.min(1, downsampled[i]));
+      pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
 
-    processor.onaudioprocess = (event) => {
-        if (ws.readyState !== WebSocket.OPEN) return;
+    // ── Merge with leftover from previous callback ──
+    const merged = new Int16Array(leftover.length + pcm16.length);
+    merged.set(leftover, 0);
+    merged.set(pcm16, leftover.length);
 
-        const input = event.inputBuffer.getChannelData(0);
+    // ── Send exact 20 ms frames ──
+    let offset = 0;
+    while (offset + FRAME_SAMPLES <= merged.length) {
+      const frame = merged.slice(offset, offset + FRAME_SAMPLES);
+      ws.send(frame.buffer);
+      offset += FRAME_SAMPLES;
+    }
 
-        const targetSampleRate = 16000;
-        const ratio = audioContext.sampleRate / targetSampleRate;
-        const newLength = Math.floor(input.length / ratio);
-        const downsampled = new Float32Array(newLength);
+    // ── Keep any remaining samples for next callback ──
+    leftover = merged.slice(offset);
+  };
 
-        for (let i = 0; i < newLength; i++) {
-            downsampled[i] = input[Math.floor(i * ratio)];
-        }
-
-        // Float32 → PCM16
-        const pcm16 = new Int16Array(downsampled.length);
-        for (let i = 0; i < downsampled.length; i++) {
-            const s = Math.max(-1, Math.min(1, downsampled[i]));
-            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        }
-
-        // 🔥 CRITICAL: 20ms frame chunking (REQUIRED FOR VAD)
-        const FRAME_SIZE = 320; // 20ms @ 16kHz
-
-        for (let i = 0; i < pcm16.length; i += FRAME_SIZE) {
-            const frame = pcm16.slice(i, i + FRAME_SIZE);
-            if (frame.length === FRAME_SIZE) {
-                ws.send(frame.buffer);
-            }
-        }
-    };
-
-    return {
-        stop: () => {
-            processor.disconnect();
-            source.disconnect();
-            stream.getTracks().forEach((t) => t.stop());
-            audioContext.close();
-        },
-    };
+  // ── 5. Return a controller with stop() ───────────────────────────────
+  return {
+    stop: () => {
+      try { processor.disconnect(); } catch (_) { /* already disconnected */ }
+      try { source.disconnect(); } catch (_) { /* already disconnected */ }
+      stream.getTracks().forEach((t) => t.stop());
+      if (audioContext.state !== "closed") {
+        audioContext.close().catch(() => {});
+      }
+      console.log("🎤 Mic stopped & cleaned up");
+    },
+  };
 };
