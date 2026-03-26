@@ -12,16 +12,14 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import TextFillLoader from "./components/TextFillLoader";
 import MicButton from "./components/MicButton";
 import Orb from "./components/Orb";
 import { startStreamingMic } from "./utils/audioUtils";
 
 // ── Backend URLs ─────────────────────────────────────────────────────────────
-const BACKEND_HOST =
-  "handy-backend-lightsail.4s7gsqtx7jmn0.ap-south-1.cs.amazonlightsail.com";
-const API_BASE = `https://${BACKEND_HOST}`;
-const WS_BASE = `wss://${BACKEND_HOST}`;
+const BACKEND_HOST = "127.0.0.1:8000";
+const API_BASE = `http://${BACKEND_HOST}`;
+const WS_BASE = `ws://${BACKEND_HOST}`;
 
 // ── Defaults for quick testing ───────────────────────────────────────────────
 const DEFAULT_INFLUENCER_ID = "influencer_1";
@@ -273,11 +271,9 @@ function App() {
 
   // ── Loading screen timer ──
   useEffect(() => {
-    const timer = setTimeout(() => setIsLoading(false), 8000);
+    const timer = setTimeout(() => setIsLoading(false), 2000);
     return () => clearTimeout(timer);
   }, []);
-
-  const handleLoadingComplete = () => setIsLoading(false);
 
   // ── Clear error after 6s ──
   useEffect(() => {
@@ -534,9 +530,15 @@ function App() {
             key="loading"
             initial={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 1.5, ease: "easeInOut" }}
+            transition={{ duration: 1.0, ease: "easeInOut" }}
+            className="min-h-screen flex items-center justify-center"
+            style={{
+              background: "linear-gradient(to top, #FF7700 0%, #000000 75%)",
+            }}
           >
-            <TextFillLoader onComplete={handleLoadingComplete} />
+            <h1 className="text-4xl md:text-5xl font-bold text-white tracking-tight drop-shadow-2xl">
+              Ninad <span style={{ color: "#FF7700" }}>AI</span>
+            </h1>
           </motion.div>
         ) : (
           <motion.div
