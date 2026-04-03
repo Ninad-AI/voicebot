@@ -17,12 +17,12 @@ import Orb from "./components/Orb";
 import { startStreamingMic } from "./utils/audioUtils";
 
 // ── Backend URLs ─────────────────────────────────────────────────────────────
-const BACKEND_HOST = "127.0.0.1:8000";
-const API_BASE = `http://${BACKEND_HOST}`;
-const WS_BASE = `ws://${BACKEND_HOST}`;
+const BACKEND_HOST = "api-ninad.duckdns.org";
+const API_BASE = `https://${BACKEND_HOST}`;
+const WS_BASE = `wss://${BACKEND_HOST}`;
 
 // ── Defaults for quick testing ───────────────────────────────────────────────
-const DEFAULT_INFLUENCER_ID = "influencer_1";
+const DEFAULT_INFLUENCER_ID = "influencer_2";
 const DEFAULT_PREFERRED_PROVIDER = "vapi";
 
 // ── localStorage key ─────────────────────────────────────────────────────────
