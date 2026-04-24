@@ -1,13 +1,23 @@
 // src/App.jsx
 // ─────────────────────────────────────────────────────────────────────────────
-// Ninad AI — Voice Bot Frontend
+// Ninad AI — Voice Bot Frontend (Meta Demo Backend)
 //
 // Flow:
-//   1. Login screen (email + password → POST /auth/login → JWT)
-//   2. Main voice UI (Orb + Mic)  — tap mic to start / stop conversation
-//   3. WebSocket connects to /ws/voice with query params, sends init JSON,
-//      then streams continuous PCM16 16 kHz mono audio.
-//   4. Backend returns binary PCM16 TTS audio + JSON control messages.
+//   1. Persona selector — user picks which AI character to chat with
+//   2. WebSocket connects to /ws/audio/{persona_name}
+//   3. Onboarding prompt plays — "Introduce yourself — your name and 3 things!"
+//   4. Client-side VAD sends speech_start/speech_end JSON messages
+//   5. PCM16 audio frames (16 kHz mono) streamed between VAD markers
+//   6. Backend processes: STT → LLM → TTS voice cloning
+//   7. Backend returns binary PCM16 audio + control messages (clone status, etc)
+//
+// Control Messages from backend:
+//   {"type": "onboarding_start"}
+//   {"type": "onboarding_done"}
+//   {"type": "voice_clone_started"}
+//   {"type": "voice_clone_ready", "voice_id": "..."}
+//   {"type": "voice_clone_failed"}
+//   {"type": "tts_start"} / {"type": "tts_end"}
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useState, useRef, useEffect, useCallback } from "react";
@@ -16,58 +26,23 @@ import MicButton from "./components/MicButton";
 import Orb from "./components/Orb";
 import { startStreamingMic } from "./utils/audioUtils";
 
-// ── Backend URLs ─────────────────────────────────────────────────────────────
-const BACKEND_HOST = "api-ninad.duckdns.org";
-const API_BASE = `https://${BACKEND_HOST}`;
-const WS_BASE = `wss://${BACKEND_HOST}`;
+// ── Backend URLs ─────────────────────────────────────────────────────────
+// Local development - connect to 0.0.0.0:8000
+const BACKEND_HOST = "localhost:8000";
+const WS_BASE = `ws://${BACKEND_HOST}`;
 
-// ── Defaults for quick testing ───────────────────────────────────────────────
-const DEFAULT_INFLUENCER_ID = "influencer_2";
-const DEFAULT_PREFERRED_PROVIDER = "vapi";
+// ── Available Personas ───────────────────────────────────────────────────────
+const PERSONAS = [
+  { id: "deepika", name: "Deepika" },
+];
 
 // ── localStorage key ─────────────────────────────────────────────────────────
-const JWT_KEY = "ninad_jwt";
+const SELECTED_PERSONA_KEY = "ninad_selected_persona";
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Login Screen Component
+//  Persona Selector Component
 // ─────────────────────────────────────────────────────────────────────────────
-function LoginScreen({ onLogin }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
-
-    try {
-      const resp = await fetch(`${API_BASE}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}));
-        throw new Error(body.detail || `Login failed (${resp.status})`);
-      }
-
-      const data = await resp.json();
-      const token = data.access_token || data.token;
-      if (!token) throw new Error("No token in login response");
-
-      localStorage.setItem(JWT_KEY, token);
-      onLogin(token);
-    } catch (err) {
-      console.error("Login error:", err);
-      setError(err.message || "Login failed");
-    } finally {
-      setLoading(false);
-    }
-  };
-
+function PersonaSelector({ onSelect }) {
   return (
     <div
       className="min-h-screen flex items-center justify-center px-4"
@@ -87,8 +62,10 @@ function LoginScreen({ onLogin }) {
           borderRadius: "24px",
           padding: "48px 40px",
           width: "100%",
-          maxWidth: "420px",
+          maxWidth: "500px",
           boxShadow: "0 32px 64px rgba(0,0,0,0.5)",
+          maxHeight: "80vh",
+          overflowY: "auto",
         }}
       >
         <h1
@@ -110,131 +87,42 @@ function LoginScreen({ onLogin }) {
             marginBottom: "32px",
           }}
         >
-          Sign in to start your voice conversation
+          Choose a persona to chat with
         </p>
 
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: "16px" }}>
-            <label
-              htmlFor="login-email"
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          {PERSONAS.map((persona) => (
+            <motion.button
+              key={persona.id}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => onSelect(persona.id)}
               style={{
-                display: "block",
-                color: "rgba(255,255,255,0.6)",
-                fontSize: "0.75rem",
-                fontWeight: 500,
-                marginBottom: "6px",
-                textTransform: "uppercase",
-                letterSpacing: "0.05em",
-              }}
-            >
-              Email
-            </label>
-            <input
-              id="login-email"
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              style={{
-                width: "100%",
-                padding: "12px 16px",
+                padding: "16px 20px",
                 borderRadius: "12px",
-                border: "1px solid rgba(255,255,255,0.12)",
-                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255, 255, 255, 0.12)",
+                background: "rgba(255, 119, 0, 0.1)",
                 color: "#fff",
-                fontSize: "0.95rem",
-                outline: "none",
-                transition: "border-color 0.2s",
-              }}
-              onFocus={(e) =>
-                (e.target.style.borderColor = "rgba(255,119,0,0.6)")
-              }
-              onBlur={(e) =>
-                (e.target.style.borderColor = "rgba(255,255,255,0.12)")
-              }
-            />
-          </div>
-
-          <div style={{ marginBottom: "24px" }}>
-            <label
-              htmlFor="login-password"
-              style={{
-                display: "block",
-                color: "rgba(255,255,255,0.6)",
-                fontSize: "0.75rem",
+                fontSize: "0.9rem",
                 fontWeight: 500,
-                marginBottom: "6px",
-                textTransform: "uppercase",
-                letterSpacing: "0.05em",
-              }}
-            >
-              Password
-            </label>
-            <input
-              id="login-password"
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              style={{
-                width: "100%",
-                padding: "12px 16px",
-                borderRadius: "12px",
-                border: "1px solid rgba(255,255,255,0.12)",
-                background: "rgba(255,255,255,0.06)",
-                color: "#fff",
-                fontSize: "0.95rem",
-                outline: "none",
-                transition: "border-color 0.2s",
-              }}
-              onFocus={(e) =>
-                (e.target.style.borderColor = "rgba(255,119,0,0.6)")
-              }
-              onBlur={(e) =>
-                (e.target.style.borderColor = "rgba(255,255,255,0.12)")
-              }
-            />
-          </div>
-
-          {error && (
-            <motion.p
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              style={{
-                color: "#ff4444",
-                fontSize: "0.85rem",
+                cursor: "pointer",
+                letterSpacing: "0.02em",
+                transition: "all 0.2s",
                 textAlign: "center",
-                marginBottom: "16px",
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.background = "rgba(255, 119, 0, 0.3)";
+                e.target.style.borderColor = "rgba(255, 119, 0, 0.6)";
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.background = "rgba(255, 119, 0, 0.1)";
+                e.target.style.borderColor = "rgba(255, 255, 255, 0.12)";
               }}
             >
-              {error}
-            </motion.p>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              width: "100%",
-              padding: "14px",
-              borderRadius: "14px",
-              border: "none",
-              background: loading
-                ? "rgba(255,119,0,0.4)"
-                : "linear-gradient(135deg, #FF7700, #E99200)",
-              color: "#fff",
-              fontSize: "1rem",
-              fontWeight: 600,
-              cursor: loading ? "not-allowed" : "pointer",
-              transition: "all 0.2s",
-              letterSpacing: "0.02em",
-            }}
-          >
-            {loading ? "Signing in…" : "Sign In"}
-          </button>
-        </form>
+              {persona.name}
+            </motion.button>
+          ))}
+        </div>
       </motion.div>
     </div>
   );
@@ -244,8 +132,11 @@ function LoginScreen({ onLogin }) {
 //  Main App Component
 // ─────────────────────────────────────────────────────────────────────────────
 function App() {
-  // ── Auth state ──
-  const [jwt, setJwt] = useState(() => localStorage.getItem(JWT_KEY) || null);
+  // ── Persona selection ──
+  const [selectedPersona, setSelectedPersona] = useState(() => {
+    const saved = localStorage.getItem(SELECTED_PERSONA_KEY);
+    return saved || "deepika"; // Auto-select deepika
+  });
 
   // ── Loading animation ──
   const [isLoading, setIsLoading] = useState(true);
@@ -253,6 +144,14 @@ function App() {
   // ── Conversation state ──
   const [conversationActive, setConversationActive] = useState(false);
   const conversationActiveRef = useRef(false);
+
+  // ── Onboarding state ──
+  const [isOnboarding, setIsOnboarding] = useState(false);
+  const [onboardingPrompt, setOnboardingPrompt] = useState("");
+
+  // ── Voice clone state ──
+  const [voiceCloneStatus, setVoiceCloneStatus] = useState(null); // null | "started" | "ready" | "failed"
+  const [clonedVoiceId, setClonedVoiceId] = useState(null);
 
   // ── UI indicators ──
   const [isListening, setIsListening] = useState(false);
@@ -384,12 +283,8 @@ function App() {
       setErrorMessage("");
       setStatusText("Connecting…");
 
-      // Build WebSocket URL with query params
-      const params = new URLSearchParams({
-        influencer_id: DEFAULT_INFLUENCER_ID,
-        preferred_provider: DEFAULT_PREFERRED_PROVIDER,
-      });
-      const wsUrl = `${WS_BASE}/ws/voice?${params.toString()}`;
+      // Build WebSocket URL using selected persona
+      const wsUrl = `${WS_BASE}/ws/audio/${selectedPersona}`;
 
       console.log("🔗 Connecting to", wsUrl);
       const ws = new WebSocket(wsUrl);
@@ -397,15 +292,7 @@ function App() {
       wsRef.current = ws;
 
       ws.onopen = async () => {
-        console.log("✅ WebSocket connected — sending init message");
-
-        // ── Send the required init JSON message ──
-        const initPayload = {
-          token: jwt,
-          influencer_id: DEFAULT_INFLUENCER_ID,
-          preferred_provider: DEFAULT_PREFERRED_PROVIDER,
-        };
-        ws.send(JSON.stringify(initPayload));
+        console.log("✅ WebSocket connected");
 
         // ── Resume playback AudioContext (user gesture requirement) ──
         const ctx = getAudioContext();
@@ -440,24 +327,51 @@ function App() {
             console.log("📩 Control message:", msg);
 
             switch (msg.type) {
+              case "onboarding_start":
+                setIsOnboarding(true);
+                setStatusText("Onboarding: Please introduce yourself");
+                break;
+
+              case "onboarding_done":
+                setIsOnboarding(false);
+                setStatusText("");
+                break;
+
+              case "voice_clone_started":
+                setVoiceCloneStatus("started");
+                setStatusText("🔄 Cloning your voice...");
+                break;
+
+              case "voice_clone_ready":
+                setVoiceCloneStatus("ready");
+                setClonedVoiceId(msg.voice_id || null);
+                setStatusText("✨ Your voice is ready!");
+                setTimeout(() => setStatusText(""), 3000);
+                break;
+
+              case "voice_clone_failed":
+                setVoiceCloneStatus("failed");
+                setErrorMessage("Voice cloning failed, using default voice");
+                break;
+
               case "tts_start":
                 setIsResponding(true);
                 setIsListening(false);
                 break;
+
               case "tts_end":
                 setIsResponding(false);
                 break;
+
               case "error":
                 setErrorMessage(msg.message || "Server error");
                 break;
-              case "auth_failed":
-                setErrorMessage("Authentication failed — please log in again.");
-                handleLogout();
-                break;
+
               case "session_end":
                 setStatusText("Session ended");
                 cleanup();
                 break;
+
               default:
                 // Log unknown control messages
                 break;
@@ -486,7 +400,7 @@ function App() {
       setErrorMessage(err.message || "Failed to connect");
       cleanup();
     }
-  }, [jwt, cleanup, getAudioContext, processBinaryChunk]);
+  }, [selectedPersona, cleanup, getAudioContext, processBinaryChunk]);
 
   // ── Cleanup on component unmount ──
   useEffect(() => {
@@ -499,24 +413,27 @@ function App() {
   }, [cleanup]);
 
   // ─────────────────────────────────────────────────────────────────────────
-  //  Auth Handlers
+  //  Persona Selection Handlers
   // ─────────────────────────────────────────────────────────────────────────
 
-  const handleLogin = (token) => {
-    setJwt(token);
+  const handleSelectPersona = (personaId) => {
+    setSelectedPersona(personaId);
+    localStorage.setItem(SELECTED_PERSONA_KEY, personaId);
   };
 
-  const handleLogout = () => {
+  const handleChangePersona = () => {
     cleanup();
-    localStorage.removeItem(JWT_KEY);
-    setJwt(null);
+    setSelectedPersona(null);
+    setVoiceCloneStatus(null);
+    setClonedVoiceId(null);
+    setIsOnboarding(false);
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  //  Render — Login Gate
+  //  Render — Persona Selection Gate
   // ─────────────────────────────────────────────────────────────────────────
-  if (!jwt) {
-    return <LoginScreen onLogin={handleLogin} />;
+  if (!selectedPersona) {
+    return <PersonaSelector onSelect={handleSelectPersona} />;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -559,15 +476,22 @@ function App() {
               {/* Header */}
               <header className="absolute top-0 left-0 right-0 p-6 z-10">
                 <div className="flex justify-between items-center">
-                  <h1 className="text-3xl md:text-4xl font-bold text-white tracking-tight drop-shadow-2xl">
-                    Ninad <span className="text-ninad-start-hover">AI</span>
-                  </h1>
+                  <div>
+                    <h1 className="text-3xl md:text-4xl font-bold text-white tracking-tight drop-shadow-2xl">
+                      Ninad <span className="text-ninad-start-hover">AI</span>
+                    </h1>
+                    {selectedPersona && (
+                      <p className="text-sm text-gray-300 mt-1">
+                        Chatting with {PERSONAS.find(p => p.id === selectedPersona)?.name}
+                      </p>
+                    )}
+                  </div>
 
-                  {/* Logout button */}
+                  {/* Change Persona button */}
                   <motion.button
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
-                    onClick={handleLogout}
+                    onClick={handleChangePersona}
                     style={{
                       background: "rgba(255, 255, 255, 0.08)",
                       backdropFilter: "blur(12px)",
@@ -583,9 +507,9 @@ function App() {
                       transition: "all 0.2s",
                     }}
                     onMouseEnter={(e) => {
-                      e.target.style.background = "rgba(255,68,68,0.2)";
-                      e.target.style.borderColor = "rgba(255,68,68,0.3)";
-                      e.target.style.color = "#ff6666";
+                      e.target.style.background = "rgba(100, 150, 255, 0.2)";
+                      e.target.style.borderColor = "rgba(100, 150, 255, 0.3)";
+                      e.target.style.color = "#88ccff";
                     }}
                     onMouseLeave={(e) => {
                       e.target.style.background = "rgba(255,255,255,0.08)";
@@ -593,7 +517,7 @@ function App() {
                       e.target.style.color = "rgba(255,255,255,0.8)";
                     }}
                   >
-                    Logout
+                    Change Persona
                   </motion.button>
                 </div>
               </header>
@@ -620,7 +544,40 @@ function App() {
                 </div>
 
                 {/* Status Indicators */}
-                <div className="mt-8 text-center" style={{ minHeight: "24px" }}>
+                <div className="mt-8 text-center" style={{ minHeight: "60px" }}>
+                  {isOnboarding && (
+                    <motion.p
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="text-white text-sm font-medium drop-shadow-lg mb-2"
+                      style={{ color: "#FFD700" }}
+                    >
+                      🎙️ Onboarding: Introduce yourself!
+                    </motion.p>
+                  )}
+
+                  {voiceCloneStatus === "started" && (
+                    <motion.p
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="text-white text-sm font-medium animate-pulse drop-shadow-lg"
+                      style={{ color: "#87CEEB" }}
+                    >
+                      🔄 Cloning your voice...
+                    </motion.p>
+                  )}
+
+                  {voiceCloneStatus === "ready" && (
+                    <motion.p
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="text-white text-sm font-medium drop-shadow-lg"
+                      style={{ color: "#90EE90" }}
+                    >
+                      ✨ Your voice is ready!
+                    </motion.p>
+                  )}
+
                   {statusText && (
                     <motion.p
                       initial={{ opacity: 0 }}
@@ -631,7 +588,7 @@ function App() {
                     </motion.p>
                   )}
 
-                  {conversationActive && isListening && !isResponding && (
+                  {conversationActive && isListening && !isResponding && !isOnboarding && (
                     <motion.p
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
@@ -651,7 +608,7 @@ function App() {
                     </motion.p>
                   )}
 
-                  {conversationActive && !isListening && !isResponding && !statusText && (
+                  {conversationActive && !isListening && !isResponding && !statusText && !isOnboarding && !voiceCloneStatus && (
                     <motion.p
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
@@ -673,7 +630,7 @@ function App() {
                     </motion.p>
                   )}
 
-                  {!conversationActive && !statusText && !errorMessage && (
+                  {!conversationActive && !statusText && !errorMessage && !isOnboarding && !voiceCloneStatus && (
                     <p className="text-white text-sm font-medium drop-shadow-lg">
                       Tap the mic to start a conversation.
                     </p>

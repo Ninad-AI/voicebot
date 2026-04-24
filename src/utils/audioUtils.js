@@ -25,7 +25,7 @@ export const getAudioLevel = (analyser) => {
 };
 
 /**
- * Start continuous microphone streaming over a WebSocket.
+ * Start continuous microphone streaming over a WebSocket with client-side VAD.
  *
  * Audio pipeline:
  *   mic (browser native rate, e.g. 48 kHz)
@@ -35,8 +35,11 @@ export const getAudioLevel = (analyser) => {
  *           → slice into 20 ms frames (320 samples = 640 bytes)
  *             → ws.send(frame.buffer)
  *
- * A leftover buffer is kept between `onaudioprocess` callbacks so that
- * partial frames are never lost.
+ * Client-side VAD:
+ *   - Detects speech onset when RMS crosses VAD_THRESHOLD
+ *   - Sends {"type": "speech_start"} to backend
+ *   - Detects speech offset after VAD_SILENCE_FRAMES of silence
+ *   - Sends {"type": "speech_end"} to backend
  *
  * @param {WebSocket} ws          – An *already open* WebSocket in binary mode.
  * @param {Function}  onAudioLevel – Optional callback(level: 0‒1) per frame.
@@ -66,6 +69,10 @@ export const startStreamingMic = async (ws, onAudioLevel) => {
   const TARGET_RATE = 16000;
   const FRAME_SAMPLES = 320; // 20 ms @ 16 kHz
 
+  // ── VAD (Voice Activity Detection) parameters ──────────────────────────
+  const VAD_THRESHOLD = 0.02; // RMS threshold for speech detection
+  const VAD_SILENCE_FRAMES = 8; // how many quiet frames before ending speech (8 * 20ms = 160ms)
+
   console.log(
     `🎤 Mic opened — native ${nativeRate} Hz → resampling to ${TARGET_RATE} Hz`
   );
@@ -81,16 +88,22 @@ export const startStreamingMic = async (ws, onAudioLevel) => {
   // ── 4. Leftover buffer for frame alignment ───────────────────────────
   let leftover = new Int16Array(0);
 
+  // ── 5. VAD state ─────────────────────────────────────────────────────
+  let isSpeechActive = false;
+  let silenceFrameCount = 0;
+
   processor.onaudioprocess = (event) => {
     if (ws.readyState !== WebSocket.OPEN) return;
 
     const input = event.inputBuffer.getChannelData(0); // Float32Array
 
-    // ── Compute audio level for visualisation ──
+    // ── Compute RMS for VAD ──
+    let sumSq = 0;
+    for (let i = 0; i < input.length; i++) sumSq += input[i] * input[i];
+    const rms = Math.sqrt(sumSq / input.length);
+
+    // ── Notify audio level for visualisation ──
     if (typeof onAudioLevel === "function") {
-      let sumSq = 0;
-      for (let i = 0; i < input.length; i++) sumSq += input[i] * input[i];
-      const rms = Math.sqrt(sumSq / input.length);
       onAudioLevel(Math.min(rms * 6, 1)); // normalise to 0-1
     }
 
@@ -113,6 +126,29 @@ export const startStreamingMic = async (ws, onAudioLevel) => {
     const merged = new Int16Array(leftover.length + pcm16.length);
     merged.set(leftover, 0);
     merged.set(pcm16, leftover.length);
+
+    // ── VAD Logic ──
+    if (rms > VAD_THRESHOLD) {
+      // Speech detected
+      if (!isSpeechActive) {
+        isSpeechActive = true;
+        silenceFrameCount = 0;
+        console.log("🎤 speech_start");
+        ws.send(JSON.stringify({ type: "speech_start" }));
+      } else {
+        silenceFrameCount = 0; // reset silence counter
+      }
+    } else {
+      // Silence detected
+      if (isSpeechActive) {
+        silenceFrameCount++;
+        if (silenceFrameCount >= VAD_SILENCE_FRAMES) {
+          isSpeechActive = false;
+          console.log("🤐 speech_end");
+          ws.send(JSON.stringify({ type: "speech_end" }));
+        }
+      }
+    }
 
     // ── Send exact 20 ms frames ──
     let offset = 0;
